@@ -130,7 +130,8 @@ export async function criarComercioEDono(params: {
 
 export function observarComercio(
   comercioId: string,
-  onData: (comercio: Comercio | null) => void
+  onData: (comercio: Comercio | null) => void,
+  onError?: (err: unknown) => void
 ): Unsubscribe {
   return onSnapshot(
     doc(db, 'comercios', comercioId),
@@ -152,46 +153,57 @@ export function observarComercio(
         criadoEm: toDate(d.criadoEm),
       });
     },
-    (err) => handleFirestoreError(err, OperationType.GET, `comercios/${comercioId}`)
+    (err) => {
+      if (onError) {
+        onError(err);
+      } else {
+        handleFirestoreError(err, OperationType.GET, `comercios/${comercioId}`);
+      }
+    }
   );
 }
 
 export function observarClientes(
   comercioId: string,
-  onData: (clientes: Cliente[]) => void
+  onData: (clientes: Cliente[]) => void,
+  onError?: (err: unknown) => void
 ): Unsubscribe {
-  const q = query(
-    collection(db, 'clientes'),
-    where('comercioId', '==', comercioId),
-    orderBy('valorVencido', 'desc')
-  );
+  const q = query(collection(db, 'clientes'), where('comercioId', '==', comercioId));
   return onSnapshot(
     q,
     (snap) => {
-      const list: Cliente[] = snap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        return {
-          id: docSnap.id,
-          comercioId: String(d.comercioId),
-          nome: String(d.nome),
-          whatsapp: String(d.whatsapp),
-          consentimentoWhatsapp: Boolean(d.consentimentoWhatsapp),
-          consentimentoEm: toDate(d.consentimentoEm),
-          limiteCredito: Number(d.limiteCredito ?? 0),
-          diaVencimento: Number(d.diaVencimento ?? 10),
-          ativo: Boolean(d.ativo),
-          anonimizado: Boolean(d.anonimizado),
-          saldoDevedor: Number(d.saldoDevedor ?? 0),
-          valorVencido: Number(d.valorVencido ?? 0),
-          valorAVencer: Number(d.valorAVencer ?? 0),
-          proximoVencimento: String(d.proximoVencimento ?? ''),
-          criadoEm: toDate(d.criadoEm),
-          atualizadoEm: toDate(d.atualizadoEm),
-        };
-      });
+      const list: Cliente[] = snap.docs
+        .map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            id: docSnap.id,
+            comercioId: String(d.comercioId),
+            nome: String(d.nome),
+            whatsapp: String(d.whatsapp),
+            consentimentoWhatsapp: Boolean(d.consentimentoWhatsapp),
+            consentimentoEm: toDate(d.consentimentoEm),
+            limiteCredito: Number(d.limiteCredito ?? 0),
+            diaVencimento: Number(d.diaVencimento ?? 10),
+            ativo: Boolean(d.ativo),
+            anonimizado: Boolean(d.anonimizado),
+            saldoDevedor: Number(d.saldoDevedor ?? 0),
+            valorVencido: Number(d.valorVencido ?? 0),
+            valorAVencer: Number(d.valorAVencer ?? 0),
+            proximoVencimento: String(d.proximoVencimento ?? ''),
+            criadoEm: toDate(d.criadoEm),
+            atualizadoEm: toDate(d.atualizadoEm),
+          };
+        })
+        .sort((a, b) => b.valorVencido - a.valorVencido);
       onData(list);
     },
-    (err) => handleFirestoreError(err, OperationType.LIST, 'clientes')
+    (err) => {
+      if (onError) {
+        onError(err);
+      } else {
+        handleFirestoreError(err, OperationType.LIST, 'clientes');
+      }
+    }
   );
 }
 
@@ -200,35 +212,33 @@ export function observarLancamentosCliente(
   clienteId: string,
   onData: (lancamentos: Lancamento[]) => void
 ): Unsubscribe {
-  const q = query(
-    collection(db, 'lancamentos'),
-    where('comercioId', '==', comercioId),
-    where('clienteId', '==', clienteId),
-    orderBy('criadoEm', 'desc')
-  );
+  const q = query(collection(db, 'lancamentos'), where('comercioId', '==', comercioId));
   return onSnapshot(
     q,
     (snap) => {
-      const list: Lancamento[] = snap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        return {
-          id: docSnap.id,
-          comercioId: String(d.comercioId),
-          clienteId: String(d.clienteId),
-          tipo: d.tipo,
-          valor: Number(d.valor ?? 0),
-          forma: d.forma,
-          itens: String(d.itens ?? ''),
-          vencimento: String(d.vencimento ?? ''),
-          valorEmAberto: Number(d.valorEmAberto ?? 0),
-          autorizadoExcecaoPor: String(d.autorizadoExcecaoPor ?? ''),
-          estornoDe: String(d.estornoDe ?? ''),
-          justificativa: String(d.justificativa ?? ''),
-          idempotencyKey: String(d.idempotencyKey ?? ''),
-          criadoPor: String(d.criadoPor),
-          criadoEm: toDate(d.criadoEm),
-        };
-      });
+      const list: Lancamento[] = snap.docs
+        .filter((docSnap) => docSnap.data().clienteId === clienteId)
+        .map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            id: docSnap.id,
+            comercioId: String(d.comercioId),
+            clienteId: String(d.clienteId),
+            tipo: d.tipo,
+            valor: Number(d.valor ?? 0),
+            forma: d.forma,
+            itens: String(d.itens ?? ''),
+            vencimento: String(d.vencimento ?? ''),
+            valorEmAberto: Number(d.valorEmAberto ?? 0),
+            autorizadoExcecaoPor: String(d.autorizadoExcecaoPor ?? ''),
+            estornoDe: String(d.estornoDe ?? ''),
+            justificativa: String(d.justificativa ?? ''),
+            idempotencyKey: String(d.idempotencyKey ?? ''),
+            criadoPor: String(d.criadoPor),
+            criadoEm: toDate(d.criadoEm),
+          };
+        })
+        .sort((a, b) => b.criadoEm.getTime() - a.criadoEm.getTime());
       onData(list);
     },
     (err) => handleFirestoreError(err, OperationType.LIST, 'lancamentos')
@@ -239,27 +249,25 @@ export function observarUsuariosComercio(
   comercioId: string,
   onData: (usuarios: Usuario[]) => void
 ): Unsubscribe {
-  const q = query(
-    collection(db, 'usuarios'),
-    where('comercioId', '==', comercioId),
-    orderBy('criadoEm', 'desc')
-  );
+  const q = query(collection(db, 'usuarios'), where('comercioId', '==', comercioId));
   return onSnapshot(
     q,
     (snap) => {
-      const list: Usuario[] = snap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        return {
-          uid: docSnap.id,
-          comercioId: String(d.comercioId),
-          perfil: d.perfil === 'dono' ? 'dono' : 'atendente',
-          nome: String(d.nome),
-          email: String(d.email),
-          ativo: Boolean(d.ativo),
-          criadoPor: String(d.criadoPor),
-          criadoEm: toDate(d.criadoEm),
-        };
-      });
+      const list: Usuario[] = snap.docs
+        .map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            uid: docSnap.id,
+            comercioId: String(d.comercioId),
+            perfil: (d.perfil === 'dono' ? 'dono' : 'atendente') as Usuario['perfil'],
+            nome: String(d.nome),
+            email: String(d.email),
+            ativo: Boolean(d.ativo),
+            criadoPor: String(d.criadoPor),
+            criadoEm: toDate(d.criadoEm),
+          };
+        })
+        .sort((a, b) => b.criadoEm.getTime() - a.criadoEm.getTime());
       onData(list);
     },
     (err) => handleFirestoreError(err, OperationType.LIST, 'usuarios')
@@ -271,29 +279,27 @@ export function observarLinksCliente(
   clienteId: string,
   onData: (links: LinkConsulta[]) => void
 ): Unsubscribe {
-  const q = query(
-    collection(db, 'linksConsulta'),
-    where('comercioId', '==', comercioId),
-    where('clienteId', '==', clienteId),
-    orderBy('criadoEm', 'desc')
-  );
+  const q = query(collection(db, 'linksConsulta'), where('comercioId', '==', comercioId));
   return onSnapshot(
     q,
     (snap) => {
-      const list: LinkConsulta[] = snap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        return {
-          tokenHash: docSnap.id,
-          comercioId: String(d.comercioId),
-          clienteId: String(d.clienteId),
-          expiraEm: toDate(d.expiraEm),
-          revogado: Boolean(d.revogado),
-          tentativasErradas: Number(d.tentativasErradas ?? 0),
-          bloqueadoAte: toDate(d.bloqueadoAte),
-          criadoPor: String(d.criadoPor),
-          criadoEm: toDate(d.criadoEm),
-        };
-      });
+      const list: LinkConsulta[] = snap.docs
+        .filter((docSnap) => docSnap.data().clienteId === clienteId)
+        .map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            tokenHash: docSnap.id,
+            comercioId: String(d.comercioId),
+            clienteId: String(d.clienteId),
+            expiraEm: toDate(d.expiraEm),
+            revogado: Boolean(d.revogado),
+            tentativasErradas: Number(d.tentativasErradas ?? 0),
+            bloqueadoAte: toDate(d.bloqueadoAte),
+            criadoPor: String(d.criadoPor),
+            criadoEm: toDate(d.criadoEm),
+          };
+        })
+        .sort((a, b) => b.criadoEm.getTime() - a.criadoEm.getTime());
       onData(list);
     },
     (err) => handleFirestoreError(err, OperationType.LIST, 'linksConsulta')
@@ -317,11 +323,10 @@ export async function cadastrarCliente(params: {
     throw new Error('É obrigatório confirmar o consentimento LGPD do cliente.');
   }
 
-  // RN01: Telefone único no comércio
+  // RN01: Telefone único no comércio (consulta por comercioId sem exigir índice composto)
   const dupQuery = query(
     collection(db, 'clientes'),
-    where('comercioId', '==', params.comercioId),
-    where('whatsapp', '==', e164)
+    where('comercioId', '==', params.comercioId)
   );
   let dupSnap;
   try {
@@ -329,7 +334,7 @@ export async function cadastrarCliente(params: {
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, 'clientes');
   }
-  if (!dupSnap.empty) {
+  if (dupSnap.docs.some((d) => d.data().whatsapp === e164)) {
     throw new Error('Já existe um cliente cadastrado com este número de WhatsApp neste comércio.');
   }
 
@@ -390,11 +395,10 @@ export async function editarCliente(params: {
 
   const dupQuery = query(
     collection(db, 'clientes'),
-    where('comercioId', '==', params.comercioId),
-    where('whatsapp', '==', e164)
+    where('comercioId', '==', params.comercioId)
   );
   const dupSnap = await getDocs(dupQuery);
-  const otherDup = dupSnap.docs.find((d) => d.id !== params.clienteId);
+  const otherDup = dupSnap.docs.find((d) => d.id !== params.clienteId && d.data().whatsapp === e164);
   if (otherDup) {
     throw new Error('Outro cliente já utiliza este WhatsApp neste comércio.');
   }
@@ -425,11 +429,10 @@ export async function editarCliente(params: {
     const linksSnap = await getDocs(
       query(
         collection(db, 'linksConsulta'),
-        where('comercioId', '==', params.comercioId),
-        where('clienteId', '==', params.clienteId)
+        where('comercioId', '==', params.comercioId)
       )
     );
-    for (const lDoc of linksSnap.docs) {
+    for (const lDoc of linksSnap.docs.filter((d) => d.data().clienteId === params.clienteId)) {
       batch.update(lDoc.ref, { revogado: true });
       batch.update(doc(db, 'consultasPublicas', lDoc.id), {
         revogado: true,
@@ -471,11 +474,10 @@ export async function anonimizarClienteLGPD(params: {
   const linksSnap = await getDocs(
     query(
       collection(db, 'linksConsulta'),
-      where('comercioId', '==', params.comercioId),
-      where('clienteId', '==', params.clienteId)
+      where('comercioId', '==', params.comercioId)
     )
   );
-  for (const lDoc of linksSnap.docs) {
+  for (const lDoc of linksSnap.docs.filter((d) => d.data().clienteId === params.clienteId)) {
     batch.update(lDoc.ref, { revogado: true });
     batch.update(doc(db, 'consultasPublicas', lDoc.id), {
       revogado: true,
@@ -526,12 +528,13 @@ async function sincronizarConsultasPublicasCliente(params: {
   const linksSnap = await getDocs(
     query(
       collection(db, 'linksConsulta'),
-      where('comercioId', '==', params.comercioId),
-      where('clienteId', '==', params.clienteId)
+      where('comercioId', '==', params.comercioId)
     )
   );
 
-  const activeLinks = linksSnap.docs.filter((d) => !d.data().revogado);
+  const activeLinks = linksSnap.docs.filter(
+    (d) => d.data().clienteId === params.clienteId && !d.data().revogado
+  );
   if (activeLinks.length === 0) return;
 
   const last4 = params.clienteWhatsapp.slice(-4);
@@ -580,25 +583,26 @@ async function fetchClientLancamentos(comercioId: string, clienteId: string) {
   const snap = await getDocs(
     query(
       collection(db, 'lancamentos'),
-      where('comercioId', '==', comercioId),
-      where('clienteId', '==', clienteId)
+      where('comercioId', '==', comercioId)
     )
   );
-  return snap.docs.map((d) => {
-    const data = d.data();
-    return {
-      ref: d.ref,
-      id: d.id,
-      tipo: data.tipo as Lancamento['tipo'],
-      valor: Number(data.valor ?? 0),
-      forma: data.forma as FormaPagamento,
-      itens: String(data.itens ?? ''),
-      vencimento: String(data.vencimento ?? ''),
-      estornoDe: String(data.estornoDe ?? ''),
-      idempotencyKey: String(data.idempotencyKey ?? ''),
-      criadoEmMs: toDate(data.criadoEm).getTime() || Date.now(),
-    };
-  });
+  return snap.docs
+    .filter((d) => d.data().clienteId === clienteId)
+    .map((d) => {
+      const data = d.data();
+      return {
+        ref: d.ref,
+        id: d.id,
+        tipo: data.tipo as Lancamento['tipo'],
+        valor: Number(data.valor ?? 0),
+        forma: data.forma as FormaPagamento,
+        itens: String(data.itens ?? ''),
+        vencimento: String(data.vencimento ?? ''),
+        estornoDe: String(data.estornoDe ?? ''),
+        idempotencyKey: String(data.idempotencyKey ?? ''),
+        criadoEmMs: toDate(data.criadoEm).getTime() || Date.now(),
+      };
+    });
 }
 
 export async function registrarCompra(params: {
@@ -613,23 +617,16 @@ export async function registrarCompra(params: {
 }): Promise<{ lancamentoId: string; novoSaldo: number }> {
   const idem = params.idempotencyKey || generateIdempotencyKey('cmp');
 
-  // Idempotency deduplication check (offline retry safety)
-  const dupSnap = await getDocs(
-    query(
-      collection(db, 'lancamentos'),
-      where('comercioId', '==', params.comercioId),
-      where('idempotencyKey', '==', idem)
-    )
-  );
-  if (!dupSnap.empty) {
+  const existingLancamentos = await fetchClientLancamentos(params.comercioId, params.clienteId);
+  const existingIdem = existingLancamentos.find((l) => l.idempotencyKey === idem);
+  if (existingIdem) {
     const cliSnap = await getDoc(doc(db, 'clientes', params.clienteId));
     return {
-      lancamentoId: dupSnap.docs[0].id,
+      lancamentoId: existingIdem.id,
       novoSaldo: Number(cliSnap.data()?.saldoDevedor ?? 0),
     };
   }
 
-  const existingLancamentos = await fetchClientLancamentos(params.comercioId, params.clienteId);
   const lancamentoId = makeDocId('lnc');
   const agora = new Date();
   const hojeBahia = getBahiaDateString(agora);
@@ -781,22 +778,15 @@ export async function registrarPagamento(params: {
 }): Promise<{ lancamentoId: string; novoSaldo: number }> {
   const idem = params.idempotencyKey || generateIdempotencyKey('pag');
 
-  const dupSnap = await getDocs(
-    query(
-      collection(db, 'lancamentos'),
-      where('comercioId', '==', params.comercioId),
-      where('idempotencyKey', '==', idem)
-    )
-  );
-  if (!dupSnap.empty) {
+  const existingLancamentos = await fetchClientLancamentos(params.comercioId, params.clienteId);
+  const existingIdem = existingLancamentos.find((l) => l.idempotencyKey === idem);
+  if (existingIdem) {
     const cliSnap = await getDoc(doc(db, 'clientes', params.clienteId));
     return {
-      lancamentoId: dupSnap.docs[0].id,
+      lancamentoId: existingIdem.id,
       novoSaldo: Number(cliSnap.data()?.saldoDevedor ?? 0),
     };
   }
-
-  const existingLancamentos = await fetchClientLancamentos(params.comercioId, params.clienteId);
   const lancamentoId = makeDocId('lnc');
   const agora = new Date();
   const hojeBahia = getBahiaDateString(agora);
@@ -1263,13 +1253,12 @@ export async function gerarLinkConsulta(params: {
   const prevSnap = await getDocs(
     query(
       collection(db, 'linksConsulta'),
-      where('comercioId', '==', params.comercioId),
-      where('clienteId', '==', params.cliente.id)
+      where('comercioId', '==', params.comercioId)
     )
   );
 
   const batch = writeBatch(db);
-  for (const prev of prevSnap.docs) {
+  for (const prev of prevSnap.docs.filter((d) => d.data().clienteId === params.cliente.id)) {
     if (!prev.data().revogado) {
       batch.update(prev.ref, { revogado: true });
       batch.update(doc(db, 'consultasPublicas', prev.id), {

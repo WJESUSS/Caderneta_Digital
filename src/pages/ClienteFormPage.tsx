@@ -5,9 +5,29 @@ import { useAuth } from '../context/AuthContext';
 import {
   formatWhatsAppDisplay,
   maskWhatsAppInput,
+  normalizeWhatsAppBR,
   parseBRLToCentavos,
 } from '../lib/businessRules';
 import { cadastrarCliente, editarCliente } from '../lib/firestoreService';
+
+function formatarErroCliente(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')) {
+    return 'Sem permissão no Firestore. Verifique se as regras do arquivo firestore.rules foram publicadas no Firebase Console.';
+  }
+  if (msg.includes('requires an index')) {
+    return 'O Firestore pediu um índice para esta consulta. Verifique o console do navegador para criá-lo.';
+  }
+  if (msg.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(msg);
+      if (parsed?.error) return String(parsed.error);
+    } catch {
+      // ignora parse
+    }
+  }
+  return msg || 'Não foi possível salvar o cliente.';
+}
 
 export const ClienteFormPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -42,10 +62,24 @@ export const ClienteFormPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!comercio || !usuario) return;
     setErro(null);
+
+    if (!usuario || !comercio) {
+      setErro(
+        'Os dados do comércio ainda estão carregando ou não puderam ser lidos no Firestore. Aguarde alguns segundos ou recarregue a página.'
+      );
+      return;
+    }
     if (nome.trim().length < 2) {
-      setErro('Informe o nome completo do cliente.');
+      setErro('Informe o nome completo do cliente (pelo menos 2 letras).');
+      return;
+    }
+    if (!normalizeWhatsAppBR(whatsapp)) {
+      setErro('Informe um WhatsApp válido com DDD (ex.: (71) 99999-9999).');
+      return;
+    }
+    if (!consentimento) {
+      setErro('Marque a caixa confirmando o consentimento LGPD do cliente para continuar.');
       return;
     }
 
@@ -82,7 +116,7 @@ export const ClienteFormPage: React.FC = () => {
         navigate(`/clientes/${novoId}`);
       }
     } catch (err) {
-      setErro(err instanceof Error ? err.message : 'Não foi possível salvar o cliente.');
+      setErro(formatarErroCliente(err));
     } finally {
       setSalvando(false);
     }
@@ -106,6 +140,7 @@ export const ClienteFormPage: React.FC = () => {
 
       <form
         onSubmit={handleSubmit}
+        noValidate
         className="rounded-2xl border border-[#E4E4DF] bg-white p-5 sm:p-6 space-y-4"
       >
         <div>

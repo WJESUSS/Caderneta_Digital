@@ -112,8 +112,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setClientes([]);
       return;
     }
-    const unsubCom = observarComercio(usuario.comercioId, setComercio);
-    const unsubCli = observarClientes(usuario.comercioId, setClientes);
+    const handleSubError = (err: unknown) => {
+      console.error(err);
+      setAuthError(formatProfileLoadError(err));
+    };
+    const unsubCom = observarComercio(usuario.comercioId, setComercio, handleSubError);
+    const unsubCli = observarClientes(usuario.comercioId, setClientes, handleSubError);
     return () => {
       unsubCom();
       unsubCli();
