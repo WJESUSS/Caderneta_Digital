@@ -1,0 +1,468 @@
+{
+  "entities": {
+    "Comercio": {
+      "title": "Comercio",
+      "description": "Dados do estabelecimento comercial (mercadinho, padaria, açougue, loja).",
+      "type": "object",
+      "properties": {
+        "nome": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Nome do comércio."
+        },
+        "limitePadrao": {
+          "type": "integer",
+          "description": "Limite de crédito padrão em centavos."
+        },
+        "pinHash": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Hash PBKDF2/SHA-256 do PIN de 4 dígitos do Dono."
+        },
+        "pinSalt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Salt criptográfico do PIN."
+        },
+        "pinTentativasErradas": {
+          "type": "integer",
+          "description": "Contador de erros consecutivos do PIN."
+        },
+        "pinBloqueadoAte": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data/hora limite de bloqueio temporário do PIN."
+        },
+        "donoUid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128,
+          "description": "UID do usuário Dono do comércio."
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação."
+        }
+      },
+      "required": [
+        "nome",
+        "limitePadrao",
+        "pinHash",
+        "pinSalt",
+        "pinTentativasErradas",
+        "pinBloqueadoAte",
+        "donoUid",
+        "criadoEm"
+      ]
+    },
+    "Usuario": {
+      "title": "Usuario",
+      "description": "Perfil e vínculo de acesso do operador (Dono ou Atendente).",
+      "type": "object",
+      "properties": {
+        "comercioId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "perfil": {
+          "type": "string",
+          "enum": ["dono", "atendente"]
+        },
+        "nome": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "email": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 120
+        },
+        "ativo": {
+          "type": "boolean"
+        },
+        "criadoPor": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["comercioId", "perfil", "nome", "email", "ativo", "criadoPor", "criadoEm"]
+    },
+    "Cliente": {
+      "title": "Cliente",
+      "description": "Cliente de fiado vinculado a um comércio.",
+      "type": "object",
+      "properties": {
+        "comercioId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "nome": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "whatsapp": {
+          "type": "string",
+          "pattern": "^(\\+55\\d{10,11}|ANONIMIZADO)$",
+          "maxLength": 20
+        },
+        "consentimentoWhatsapp": {
+          "type": "boolean"
+        },
+        "consentimentoEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "limiteCredito": {
+          "type": "integer"
+        },
+        "diaVencimento": {
+          "type": "integer"
+        },
+        "ativo": {
+          "type": "boolean"
+        },
+        "anonimizado": {
+          "type": "boolean"
+        },
+        "saldoDevedor": {
+          "type": "integer"
+        },
+        "valorVencido": {
+          "type": "integer"
+        },
+        "valorAVencer": {
+          "type": "integer"
+        },
+        "proximoVencimento": {
+          "type": "string",
+          "maxLength": 10
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "atualizadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "comercioId",
+        "nome",
+        "whatsapp",
+        "consentimentoWhatsapp",
+        "consentimentoEm",
+        "limiteCredito",
+        "diaVencimento",
+        "ativo",
+        "anonimizado",
+        "saldoDevedor",
+        "valorVencido",
+        "valorAVencer",
+        "proximoVencimento",
+        "criadoEm",
+        "atualizadoEm"
+      ]
+    },
+    "Lancamento": {
+      "title": "Lancamento",
+      "description": "Registro imutável de compra, pagamento ou estorno.",
+      "type": "object",
+      "properties": {
+        "comercioId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "clienteId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "tipo": {
+          "type": "string",
+          "enum": ["compra", "pagamento", "estorno"]
+        },
+        "valor": {
+          "type": "integer"
+        },
+        "forma": {
+          "type": "string",
+          "enum": ["fiado", "dinheiro", "pix_manual", "debito"]
+        },
+        "itens": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "vencimento": {
+          "type": "string",
+          "maxLength": 10
+        },
+        "valorEmAberto": {
+          "type": "integer"
+        },
+        "autorizadoExcecaoPor": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "estornoDe": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "justificativa": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 80
+        },
+        "criadoPor": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "comercioId",
+        "clienteId",
+        "tipo",
+        "valor",
+        "forma",
+        "itens",
+        "vencimento",
+        "valorEmAberto",
+        "autorizadoExcecaoPor",
+        "estornoDe",
+        "justificativa",
+        "idempotencyKey",
+        "criadoPor",
+        "criadoEm"
+      ]
+    },
+    "LinkConsulta": {
+      "title": "LinkConsulta",
+      "description": "Metadados privados de links únicos de consulta de saldo.",
+      "type": "object",
+      "properties": {
+        "comercioId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "clienteId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "expiraEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "revogado": {
+          "type": "boolean"
+        },
+        "tentativasErradas": {
+          "type": "integer"
+        },
+        "bloqueadoAte": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "criadoPor": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "comercioId",
+        "clienteId",
+        "expiraEm",
+        "revogado",
+        "tentativasErradas",
+        "bloqueadoAte",
+        "criadoPor",
+        "criadoEm"
+      ]
+    },
+    "ConsultaPublica": {
+      "title": "ConsultaPublica",
+      "description": "Projeção pública cifrada em AES-GCM para consulta de saldo pelo token sem expor PII em texto puro.",
+      "type": "object",
+      "properties": {
+        "comercioId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "clienteId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "comercioNome": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "ultimos4Hash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "payloadCifrado": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 32768
+        },
+        "expiraEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "revogado": {
+          "type": "boolean"
+        },
+        "tentativasErradas": {
+          "type": "integer"
+        },
+        "bloqueadoAte": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "atualizadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "comercioId",
+        "clienteId",
+        "comercioNome",
+        "ultimos4Hash",
+        "payloadCifrado",
+        "expiraEm",
+        "revogado",
+        "tentativasErradas",
+        "bloqueadoAte",
+        "criadoEm",
+        "atualizadoEm"
+      ]
+    },
+    "AcessoLink": {
+      "title": "AcessoLink",
+      "description": "Log de tentativas de acesso ao link público de consulta.",
+      "type": "object",
+      "properties": {
+        "comercioId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "tokenHash": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "quando": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "resultado": {
+          "type": "string",
+          "enum": ["ok", "invalido", "bloqueado"]
+        }
+      },
+      "required": ["comercioId", "tokenHash", "quando", "resultado"]
+    },
+    "Auditoria": {
+      "title": "Auditoria",
+      "description": "Trilha de auditoria imutável das ações críticas do comércio.",
+      "type": "object",
+      "properties": {
+        "comercioId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "quem": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "acao": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "detalhes": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "quando": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["comercioId", "quem", "acao", "detalhes", "quando"]
+    }
+  },
+  "firestore": {
+    "/comercios/{comercioId}": {
+      "schema": { "$ref": "#/entities/Comercio" },
+      "description": "Configurações e dados principais do comércio."
+    },
+    "/usuarios/{uid}": {
+      "schema": { "$ref": "#/entities/Usuario" },
+      "description": "Perfil e papel (dono/atendente) de cada usuário autenticado."
+    },
+    "/clientes/{clienteId}": {
+      "schema": { "$ref": "#/entities/Cliente" },
+      "description": "Cadastro de clientes fiado e saldos agregados."
+    },
+    "/lancamentos/{lancamentoId}": {
+      "schema": { "$ref": "#/entities/Lancamento" },
+      "description": "Lançamentos financeiros imutáveis (compras, pagamentos, estornos)."
+    },
+    "/linksConsulta/{tokenHash}": {
+      "schema": { "$ref": "#/entities/LinkConsulta" },
+      "description": "Controle de links de consulta gerados para clientes."
+    },
+    "/consultasPublicas/{tokenHash}": {
+      "schema": { "$ref": "#/entities/ConsultaPublica" },
+      "description": "Projeção pública cifrada acessível apenas via hash do token."
+    },
+    "/acessosLink/{acessoId}": {
+      "schema": { "$ref": "#/entities/AcessoLink" },
+      "description": "Registro de acessos e tentativas ao link de consulta."
+    },
+    "/auditoria/{auditoriaId}": {
+      "schema": { "$ref": "#/entities/Auditoria" },
+      "description": "Log imutável de auditoria operacional."
+    }
+  }
+}

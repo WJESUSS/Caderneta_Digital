@@ -1,0 +1,446 @@
+export type PerfilUsuario = 'dono' | 'atendente';
+export type TipoLancamento = 'compra' | 'pagamento' | 'estorno';
+export type FormaPagamento = 'fiado' | 'dinheiro' | 'pix_manual' | 'debito';
+
+export interface Comercio {
+  id: string;
+  nome: string;
+  limitePadrao: number;
+  pinHash: string;
+  pinSalt: string;
+  pinTentativasErradas: number;
+  pinBloqueadoAte: Date;
+  donoUid: string;
+  criadoEm: Date;
+}
+
+export interface Usuario {
+  uid: string;
+  comercioId: string;
+  perfil: PerfilUsuario;
+  nome: string;
+  email: string;
+  ativo: boolean;
+  criadoPor: string;
+  criadoEm: Date;
+}
+
+export interface Cliente {
+  id: string;
+  comercioId: string;
+  nome: string;
+  whatsapp: string;
+  consentimentoWhatsapp: boolean;
+  consentimentoEm: Date;
+  limiteCredito: number;
+  diaVencimento: number;
+  ativo: boolean;
+  anonimizado: boolean;
+  saldoDevedor: number;
+  valorVencido: number;
+  valorAVencer: number;
+  proximoVencimento: string;
+  criadoEm: Date;
+  atualizadoEm: Date;
+}
+
+export interface Lancamento {
+  id: string;
+  comercioId: string;
+  clienteId: string;
+  tipo: TipoLancamento;
+  valor: number;
+  forma: FormaPagamento;
+  itens: string;
+  vencimento: string;
+  valorEmAberto: number;
+  autorizadoExcecaoPor: string;
+  estornoDe: string;
+  justificativa: string;
+  idempotencyKey: string;
+  criadoPor: string;
+  criadoEm: Date;
+}
+
+export interface LinkConsulta {
+  tokenHash: string;
+  comercioId: string;
+  clienteId: string;
+  expiraEm: Date;
+  revogado: boolean;
+  tentativasErradas: number;
+  bloqueadoAte: Date;
+  criadoPor: string;
+  criadoEm: Date;
+}
+
+export interface LancamentoResumoPublico {
+  id: string;
+  tipo: TipoLancamento;
+  valor: number;
+  forma: FormaPagamento;
+  itens: string;
+  vencimento: string;
+  valorEmAberto: number;
+  criadoEmIso: string;
+  estornado: boolean;
+}
+
+export interface ResumoPublicoCliente {
+  comercioNome: string;
+  primeiroNome: string;
+  saldoDevedor: number;
+  valorVencido: number;
+  valorAVencer: number;
+  proximoVencimento: string;
+  atualizadoEmIso: string;
+  lancamentos: LancamentoResumoPublico[];
+}
+
+export const BAHIA_TIMEZONE = 'America/Bahia';
+
+/**
+ * Formata valor inteiro em centavos para "R$ 1.234,56"
+ */
+export function formatCentavos(centavos: number): string {
+  const safe = Number.isFinite(centavos) ? Math.round(centavos) : 0;
+  return (safe / 100).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/**
+ * Converte texto digitado em reais (ex: "12,50" ou "125") para centavos inteiros.
+ */
+export function parseBRLToCentavos(raw: string): number {
+  const cleaned = raw.replace(/[^\d,\.]/g, '').trim();
+  if (!cleaned) return 0;
+
+  let normalized = cleaned;
+  if (cleaned.includes(',')) {
+    normalized = cleaned.replace(/\./g, '').replace(',', '.');
+  } else {
+    const parts = cleaned.split('.');
+    if (parts.length > 2) {
+      const dec = parts.pop();
+      normalized = parts.join('') + '.' + dec;
+    }
+  }
+  const num = Number.parseFloat(normalized);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  return Math.round(num * 100);
+}
+
+/**
+ * Retorna data YYYY-MM-DD no fuso America/Bahia.
+ */
+export function getBahiaDateString(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: BAHIA_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+/**
+ * Formata YYYY-MM-DD para DD/MM/YYYY.
+ */
+export function formatDateBR(yyyyMmDd: string): string {
+  if (!yyyyMmDd || !/^\d{4}-\d{2}-\d{2}$/.test(yyyyMmDd)) return '—';
+  const [y, m, d] = yyyyMmDd.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+/**
+ * Valida e normaliza telefone brasileiro com DDD para E.164 (+55DDDNÚMERO).
+ * Aceita fixo (10 dígitos) ou celular (11 dígitos) com ou sem +55.
+ */
+export function normalizeWhatsAppBR(raw: string): string | null {
+  const digits = raw.replace(/\D/g, '');
+  let local = digits;
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    local = digits.slice(2);
+  }
+  if (local.length !== 10 && local.length !== 11) {
+    return null;
+  }
+  const ddd = Number.parseInt(local.slice(0, 2), 10);
+  if (ddd < 11 || ddd > 99) {
+    return null;
+  }
+  return `+55${local}`;
+}
+
+export function formatWhatsAppDisplay(e164: string): string {
+  if (!e164 || e164 === 'ANONIMIZADO') return 'Dados removidos';
+  const digits = e164.replace(/\D/g, '');
+  const local = digits.startsWith('55') ? digits.slice(2) : digits;
+  if (local.length === 11) {
+    return `(${local.slice(0, 2)}) ${local.slice(2, 7)}-${local.slice(7)}`;
+  }
+  if (local.length === 10) {
+    return `(${local.slice(0, 2)}) ${local.slice(2, 6)}-${local.slice(6)}`;
+  }
+  return e164;
+}
+
+export function maskWhatsAppInput(raw: string): string {
+  const d = raw.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
+export function buildWhatsAppUrl(e164: string, message: string): string {
+  const digits = e164.replace(/\D/g, '');
+  const full = digits.startsWith('55') ? digits : `55${digits}`;
+  return `https://wa.me/${full}?text=${encodeURIComponent(message)}`;
+}
+
+/**
+ * Dias no mês (ano, mês 1-12).
+ */
+function daysInMonth(year: number, month1to12: number): number {
+  return new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
+}
+
+/**
+ * RN14: O vencimento de uma compra é a primeira ocorrência do diaVencimento
+ * A PARTIR da data da compra no fuso America/Bahia.
+ * Trata virada de mês, ano e dias 29-31 com segurança.
+ */
+export function calcularVencimentoCompra(dataCompra: Date, diaVencimento: number): string {
+  const compraStr = getBahiaDateString(dataCompra);
+  const [yStr, mStr, dStr] = compraStr.split('-');
+  let year = Number.parseInt(yStr, 10);
+  let month = Number.parseInt(mStr, 10);
+  const day = Number.parseInt(dStr, 10);
+  const targetDay = Math.max(1, Math.min(31, Math.round(diaVencimento)));
+
+  const dueThisMonth = Math.min(targetDay, daysInMonth(year, month));
+  let finalDay = dueThisMonth;
+
+  if (day > dueThisMonth) {
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+    finalDay = Math.min(targetDay, daysInMonth(year, month));
+  }
+
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(finalDay).padStart(2, '0')}`;
+}
+
+/**
+ * RN14: A compra só é vencida A PARTIR DO DIA SEGUINTE ao vencimento,
+ * se ainda houver valor em aberto.
+ */
+export function isCompraVencida(
+  vencimento: string,
+  valorEmAberto: number,
+  hojeBahia: string = getBahiaDateString()
+): boolean {
+  if (valorEmAberto <= 0 || !vencimento) return false;
+  return hojeBahia > vencimento;
+}
+
+export interface LancamentoCalcInput {
+  id: string;
+  tipo: TipoLancamento;
+  valor: number;
+  vencimento: string;
+  estornoDe: string;
+  criadoEmMs: number;
+}
+
+export interface ResultadoCarteira {
+  saldoDevedor: number;
+  valorVencido: number;
+  valorAVencer: number;
+  proximoVencimento: string;
+  comprasAtualizadas: Map<string, number>;
+  estornadosIds: Set<string>;
+}
+
+/**
+ * RN07 + RN09 + RN10 + RN21:
+ * Recalcula todo o histórico do cliente:
+ * - Ignora lançamentos estornados
+ * - Abate pagamentos da compra em aberto de vencimento mais antigo primeiro (FIFO)
+ * - Separa valorVencido e valorAVencer exatamente (valorVencido + valorAVencer === saldoDevedor)
+ */
+export function recalcularCarteiraCliente(
+  lancamentos: LancamentoCalcInput[],
+  hojeBahia: string = getBahiaDateString()
+): ResultadoCarteira {
+  const estornadosIds = new Set<string>();
+  for (const item of lancamentos) {
+    if (item.tipo === 'estorno' && item.estornoDe) {
+      estornadosIds.add(item.estornoDe);
+    }
+  }
+
+  const comprasAtivas = lancamentos
+    .filter((l) => l.tipo === 'compra' && !estornadosIds.has(l.id))
+    .sort((a, b) => {
+      const cmpVenc = a.vencimento.localeCompare(b.vencimento);
+      if (cmpVenc !== 0) return cmpVenc;
+      return a.criadoEmMs - b.criadoEmMs;
+    });
+
+  let totalPagamentos = 0;
+  for (const item of lancamentos) {
+    if (item.tipo === 'pagamento' && !estornadosIds.has(item.id)) {
+      totalPagamentos += item.valor;
+    }
+  }
+
+  const comprasAtualizadas = new Map<string, number>();
+  let restantePagamento = totalPagamentos;
+  let valorVencido = 0;
+  let valorAVencer = 0;
+  let proximoVencimento = '';
+
+  for (const compra of comprasAtivas) {
+    const abatido = Math.min(compra.valor, restantePagamento);
+    restantePagamento -= abatido;
+    const emAberto = compra.valor - abatido;
+    comprasAtualizadas.set(compra.id, emAberto);
+
+    if (emAberto > 0) {
+      if (isCompraVencida(compra.vencimento, emAberto, hojeBahia)) {
+        valorVencido += emAberto;
+      } else {
+        valorAVencer += emAberto;
+      }
+      if (!proximoVencimento || compra.vencimento < proximoVencimento) {
+        proximoVencimento = compra.vencimento;
+      }
+    }
+  }
+
+  const saldoDevedor = valorVencido + valorAVencer;
+
+  return {
+    saldoDevedor,
+    valorVencido,
+    valorAVencer,
+    proximoVencimento,
+    comprasAtualizadas,
+    estornadosIds,
+  };
+}
+
+export interface ValidacaoCompraResult {
+  permitida: boolean;
+  exigePinDono: boolean;
+  novoSaldo: number;
+  motivo?: string;
+}
+
+/**
+ * RN04 + RN05: Bloqueia compra acima do limite salvo exceção autorizada com PIN do Dono.
+ */
+export function validarCompra(
+  saldoDevedorAtual: number,
+  valorCompra: number,
+  limiteCredito: number,
+  excecaoAutorizadaPorPin: boolean
+): ValidacaoCompraResult {
+  if (!Number.isInteger(valorCompra) || valorCompra <= 0) {
+    return {
+      permitida: false,
+      exigePinDono: false,
+      novoSaldo: saldoDevedorAtual,
+      motivo: 'Informe um valor maior que R$ 0,00.',
+    };
+  }
+  const novoSaldo = saldoDevedorAtual + valorCompra;
+  if (novoSaldo > limiteCredito && !excecaoAutorizadaPorPin) {
+    return {
+      permitida: false,
+      exigePinDono: true,
+      novoSaldo,
+      motivo: 'Compra acima do limite',
+    };
+  }
+  return {
+    permitida: true,
+    exigePinDono: novoSaldo > limiteCredito,
+    novoSaldo,
+  };
+}
+
+export interface ValidacaoPagamentoResult {
+  permitido: boolean;
+  novoSaldo: number;
+  motivo?: string;
+}
+
+/**
+ * RN08: Pagamento parcial ou total, nunca maior que o saldo devedor.
+ */
+export function validarPagamento(
+  saldoDevedorAtual: number,
+  valorPagamento: number
+): ValidacaoPagamentoResult {
+  if (!Number.isInteger(valorPagamento) || valorPagamento <= 0) {
+    return {
+      permitido: false,
+      novoSaldo: saldoDevedorAtual,
+      motivo: 'Informe um valor maior que R$ 0,00.',
+    };
+  }
+  if (saldoDevedorAtual <= 0) {
+    return {
+      permitido: false,
+      novoSaldo: 0,
+      motivo: 'Este cliente não possui saldo em aberto.',
+    };
+  }
+  if (valorPagamento > saldoDevedorAtual) {
+    return {
+      permitido: false,
+      novoSaldo: saldoDevedorAtual,
+      motivo: 'O pagamento não pode ser maior que o saldo devedor.',
+    };
+  }
+  return {
+    permitido: true,
+    novoSaldo: saldoDevedorAtual - valorPagamento,
+  };
+}
+
+export interface AvaliacaoLinkInput {
+  revogado: boolean;
+  expiraEmMs: number;
+  bloqueadoAteMs: number;
+  tentativasErradas: number;
+  agoraMs: number;
+  hashEsperado: string;
+  hashInformado: string;
+}
+
+export type StatusLinkConsulta = 'ok' | 'invalido_digitos' | 'expirado_ou_revogado' | 'bloqueado';
+
+/**
+ * RN19: Valida link público de consulta (/s/:token).
+ */
+export function avaliarLinkConsulta(input: AvaliacaoLinkInput): StatusLinkConsulta {
+  if (input.revogado || input.expiraEmMs <= input.agoraMs) {
+    return 'expirado_ou_revogado';
+  }
+  if (input.bloqueadoAteMs > input.agoraMs || input.tentativasErradas >= 5) {
+    return 'bloqueado';
+  }
+  if (input.hashEsperado !== input.hashInformado) {
+    return 'invalido_digitos';
+  }
+  return 'ok';
+}

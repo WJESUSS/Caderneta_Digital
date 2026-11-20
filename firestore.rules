@@ -1,0 +1,414 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Pillar 4.1)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers (Phase 3) ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function hasUsuario() {
+      return isSignedIn() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+
+    function getUsuario() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    function isMembroComercio(comercioId) {
+      return hasUsuario() && getUsuario().ativo == true && getUsuario().comercioId == comercioId;
+    }
+
+    function isDono(comercioId) {
+      return isMembroComercio(comercioId) && getUsuario().perfil == 'dono';
+    }
+
+    // --- Validation Blueprints (Pillar 2) ---
+    function isValidComercio(data) {
+      return data.keys().hasAll([
+          'nome', 'limitePadrao', 'pinHash', 'pinSalt',
+          'pinTentativasErradas', 'pinBloqueadoAte', 'donoUid', 'criadoEm'
+        ])
+        && data.keys().hasOnly([
+          'nome', 'limitePadrao', 'pinHash', 'pinSalt',
+          'pinTentativasErradas', 'pinBloqueadoAte', 'donoUid', 'criadoEm'
+        ])
+        && data.nome is string && data.nome.size() >= 2 && data.nome.size() <= 80
+        && data.limitePadrao is int && data.limitePadrao >= 0 && data.limitePadrao <= 100000000
+        && data.pinHash is string && data.pinHash.size() <= 128
+        && data.pinSalt is string && data.pinSalt.size() <= 64
+        && data.pinTentativasErradas is int && data.pinTentativasErradas >= 0 && data.pinTentativasErradas <= 5
+        && data.pinBloqueadoAte is timestamp
+        && isValidId(data.donoUid)
+        && data.criadoEm is timestamp;
+    }
+
+    function isValidUsuario(data) {
+      return data.keys().hasAll(['comercioId', 'perfil', 'nome', 'email', 'ativo', 'criadoPor', 'criadoEm'])
+        && data.keys().hasOnly(['comercioId', 'perfil', 'nome', 'email', 'ativo', 'criadoPor', 'criadoEm'])
+        && isValidId(data.comercioId)
+        && data.perfil in ['dono', 'atendente']
+        && data.nome is string && data.nome.size() >= 2 && data.nome.size() <= 80
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 120
+        && data.ativo is bool
+        && isValidId(data.criadoPor)
+        && data.criadoEm is timestamp;
+    }
+
+    function isValidCliente(data) {
+      return data.keys().hasAll([
+          'comercioId', 'nome', 'whatsapp', 'consentimentoWhatsapp', 'consentimentoEm',
+          'limiteCredito', 'diaVencimento', 'ativo', 'anonimizado',
+          'saldoDevedor', 'valorVencido', 'valorAVencer', 'proximoVencimento',
+          'criadoEm', 'atualizadoEm'
+        ])
+        && data.keys().hasOnly([
+          'comercioId', 'nome', 'whatsapp', 'consentimentoWhatsapp', 'consentimentoEm',
+          'limiteCredito', 'diaVencimento', 'ativo', 'anonimizado',
+          'saldoDevedor', 'valorVencido', 'valorAVencer', 'proximoVencimento',
+          'criadoEm', 'atualizadoEm'
+        ])
+        && isValidId(data.comercioId)
+        && data.nome is string && data.nome.size() >= 2 && data.nome.size() <= 100
+        && data.whatsapp is string && data.whatsapp.size() <= 20
+        && data.whatsapp.matches('^(\\+55\\d{10,11}|ANONIMIZADO)$')
+        && data.consentimentoWhatsapp is bool
+        && data.consentimentoEm is timestamp
+        && data.limiteCredito is int && data.limiteCredito >= 0 && data.limiteCredito <= 100000000
+        && data.diaVencimento is int && data.diaVencimento >= 1 && data.diaVencimento <= 28
+        && data.ativo is bool
+        && data.anonimizado is bool
+        && data.saldoDevedor is int && data.saldoDevedor >= 0 && data.saldoDevedor <= 100000000
+        && data.valorVencido is int && data.valorVencido >= 0 && data.valorVencido <= 100000000
+        && data.valorAVencer is int && data.valorAVencer >= 0 && data.valorAVencer <= 100000000
+        && data.saldoDevedor == data.valorVencido + data.valorAVencer
+        && data.proximoVencimento is string && data.proximoVencimento.size() <= 10
+        && data.criadoEm is timestamp
+        && data.atualizadoEm is timestamp;
+    }
+
+    function isValidLancamento(data) {
+      return data.keys().hasAll([
+          'comercioId', 'clienteId', 'tipo', 'valor', 'forma', 'itens',
+          'vencimento', 'valorEmAberto', 'autorizadoExcecaoPor',
+          'estornoDe', 'justificativa', 'idempotencyKey', 'criadoPor', 'criadoEm'
+        ])
+        && data.keys().hasOnly([
+          'comercioId', 'clienteId', 'tipo', 'valor', 'forma', 'itens',
+          'vencimento', 'valorEmAberto', 'autorizadoExcecaoPor',
+          'estornoDe', 'justificativa', 'idempotencyKey', 'criadoPor', 'criadoEm'
+        ])
+        && isValidId(data.comercioId)
+        && isValidId(data.clienteId)
+        && data.tipo in ['compra', 'pagamento', 'estorno']
+        && data.valor is int && data.valor > 0 && data.valor <= 100000000
+        && data.forma in ['fiado', 'dinheiro', 'pix_manual', 'debito']
+        && data.itens is string && data.itens.size() <= 240
+        && data.vencimento is string && data.vencimento.size() <= 10
+        && data.valorEmAberto is int && data.valorEmAberto >= 0 && data.valorEmAberto <= data.valor
+        && data.autorizadoExcecaoPor is string && data.autorizadoExcecaoPor.size() <= 128
+        && data.estornoDe is string && data.estornoDe.size() <= 128
+        && data.justificativa is string && data.justificativa.size() <= 300
+        && data.idempotencyKey is string && data.idempotencyKey.size() >= 8 && data.idempotencyKey.size() <= 80
+        && isValidId(data.criadoPor)
+        && data.criadoEm is timestamp
+        && (data.tipo != 'estorno' || (isValidId(data.estornoDe) && data.justificativa.size() >= 3));
+    }
+
+    function isValidLinkConsulta(data) {
+      return data.keys().hasAll([
+          'comercioId', 'clienteId', 'expiraEm', 'revogado',
+          'tentativasErradas', 'bloqueadoAte', 'criadoPor', 'criadoEm'
+        ])
+        && data.keys().hasOnly([
+          'comercioId', 'clienteId', 'expiraEm', 'revogado',
+          'tentativasErradas', 'bloqueadoAte', 'criadoPor', 'criadoEm'
+        ])
+        && isValidId(data.comercioId)
+        && isValidId(data.clienteId)
+        && data.expiraEm is timestamp
+        && data.revogado is bool
+        && data.tentativasErradas is int && data.tentativasErradas >= 0 && data.tentativasErradas <= 5
+        && data.bloqueadoAte is timestamp
+        && isValidId(data.criadoPor)
+        && data.criadoEm is timestamp;
+    }
+
+    function isValidConsultaPublica(data) {
+      return data.keys().hasAll([
+          'comercioId', 'clienteId', 'comercioNome', 'ultimos4Hash', 'payloadCifrado',
+          'expiraEm', 'revogado', 'tentativasErradas', 'bloqueadoAte', 'criadoEm', 'atualizadoEm'
+        ])
+        && data.keys().hasOnly([
+          'comercioId', 'clienteId', 'comercioNome', 'ultimos4Hash', 'payloadCifrado',
+          'expiraEm', 'revogado', 'tentativasErradas', 'bloqueadoAte', 'criadoEm', 'atualizadoEm'
+        ])
+        && isValidId(data.comercioId)
+        && isValidId(data.clienteId)
+        && data.comercioNome is string && data.comercioNome.size() >= 2 && data.comercioNome.size() <= 80
+        && data.ultimos4Hash is string && data.ultimos4Hash.size() == 64
+        && data.payloadCifrado is string && data.payloadCifrado.size() >= 10 && data.payloadCifrado.size() <= 32768
+        && data.expiraEm is timestamp
+        && data.revogado is bool
+        && data.tentativasErradas is int && data.tentativasErradas >= 0 && data.tentativasErradas <= 5
+        && data.bloqueadoAte is timestamp
+        && data.criadoEm is timestamp
+        && data.atualizadoEm is timestamp;
+    }
+
+    function isValidAcessoLink(data) {
+      return data.keys().hasAll(['comercioId', 'tokenHash', 'quando', 'resultado'])
+        && data.keys().hasOnly(['comercioId', 'tokenHash', 'quando', 'resultado'])
+        && isValidId(data.comercioId)
+        && isValidId(data.tokenHash)
+        && data.quando is timestamp
+        && data.resultado in ['ok', 'invalido', 'bloqueado'];
+    }
+
+    function isValidAuditoria(data) {
+      return data.keys().hasAll(['comercioId', 'quem', 'acao', 'detalhes', 'quando'])
+        && data.keys().hasOnly(['comercioId', 'quem', 'acao', 'detalhes', 'quando'])
+        && isValidId(data.comercioId)
+        && isValidId(data.quem)
+        && data.acao is string && data.acao.size() >= 2 && data.acao.size() <= 80
+        && data.detalhes is string && data.detalhes.size() <= 300
+        && data.quando is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    match /comercios/{comercioId} {
+      allow get: if isValidId(comercioId) && isMembroComercio(comercioId);
+      allow list: if false;
+      allow create: if isValidId(comercioId)
+        && isSignedIn()
+        && isValidComercio(incoming())
+        && incoming().donoUid == request.auth.uid
+        && incoming().criadoEm == request.time
+        && incoming().pinTentativasErradas == 0
+        && !exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && existsAfter(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+      allow update: if isValidId(comercioId)
+        && isValidComercio(incoming())
+        && incoming().donoUid == existing().donoUid
+        && incoming().criadoEm == existing().criadoEm
+        && (
+          (isDono(comercioId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'nome', 'limitePadrao', 'pinHash', 'pinSalt', 'pinTentativasErradas', 'pinBloqueadoAte'
+            ]))
+          || (isMembroComercio(comercioId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'pinTentativasErradas', 'pinBloqueadoAte'
+            ]))
+        );
+      allow delete: if false;
+    }
+
+    match /usuarios/{uid} {
+      allow get: if isValidId(uid) && isSignedIn() && (
+        request.auth.uid == uid
+        || (exists(/databases/$(database)/documents/usuarios/$(uid))
+            && isDono(get(/databases/$(database)/documents/usuarios/$(uid)).data.comercioId))
+      );
+      allow list: if isSignedIn() && isDono(resource.data.comercioId);
+      allow create: if isValidId(uid)
+        && isSignedIn()
+        && isValidUsuario(incoming())
+        && incoming().criadoPor == request.auth.uid
+        && incoming().criadoEm == request.time
+        && (
+          (uid == request.auth.uid
+            && incoming().perfil == 'dono'
+            && incoming().ativo == true
+            && !exists(/databases/$(database)/documents/usuarios/$(uid))
+            && existsAfter(/databases/$(database)/documents/comercios/$(incoming().comercioId)))
+          || (uid != request.auth.uid
+            && incoming().perfil == 'atendente'
+            && isDono(incoming().comercioId))
+        );
+      allow update: if isValidId(uid)
+        && isValidUsuario(incoming())
+        && isDono(existing().comercioId)
+        && incoming().comercioId == existing().comercioId
+        && incoming().criadoPor == existing().criadoPor
+        && incoming().criadoEm == existing().criadoEm
+        && incoming().perfil == existing().perfil
+        && uid != request.auth.uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['ativo', 'nome']);
+      allow delete: if false;
+    }
+
+    match /clientes/{clienteId} {
+      allow get: if isValidId(clienteId) && isMembroComercio(resource.data.comercioId);
+      allow list: if isMembroComercio(resource.data.comercioId);
+      allow create: if isValidId(clienteId)
+        && isValidCliente(incoming())
+        && isMembroComercio(incoming().comercioId)
+        && exists(/databases/$(database)/documents/comercios/$(incoming().comercioId))
+        && incoming().criadoEm == request.time
+        && incoming().atualizadoEm == request.time
+        && incoming().saldoDevedor == 0
+        && incoming().valorVencido == 0
+        && incoming().valorAVencer == 0
+        && incoming().anonimizado == false
+        && (isDono(incoming().comercioId)
+            || incoming().limiteCredito == get(/databases/$(database)/documents/comercios/$(incoming().comercioId)).data.limitePadrao);
+      allow update: if isValidId(clienteId)
+        && isValidCliente(incoming())
+        && incoming().comercioId == existing().comercioId
+        && incoming().criadoEm == existing().criadoEm
+        && incoming().atualizadoEm == request.time
+        && (
+          (isDono(existing().comercioId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'nome', 'whatsapp', 'consentimentoWhatsapp', 'consentimentoEm',
+              'limiteCredito', 'diaVencimento', 'ativo', 'anonimizado',
+              'saldoDevedor', 'valorVencido', 'valorAVencer', 'proximoVencimento', 'atualizadoEm'
+            ]))
+          || (isMembroComercio(existing().comercioId)
+            && existing().anonimizado == false
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'nome', 'whatsapp', 'consentimentoWhatsapp', 'consentimentoEm',
+              'diaVencimento', 'atualizadoEm'
+            ]))
+          || (isMembroComercio(existing().comercioId)
+            && existing().anonimizado == false
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'saldoDevedor', 'valorVencido', 'valorAVencer', 'proximoVencimento', 'atualizadoEm'
+            ]))
+        );
+      allow delete: if false;
+    }
+
+    match /lancamentos/{lancamentoId} {
+      allow get: if isValidId(lancamentoId) && isMembroComercio(resource.data.comercioId);
+      allow list: if isMembroComercio(resource.data.comercioId);
+      allow create: if isValidId(lancamentoId)
+        && isValidLancamento(incoming())
+        && isMembroComercio(incoming().comercioId)
+        && incoming().criadoPor == request.auth.uid
+        && incoming().criadoEm == request.time
+        && exists(/databases/$(database)/documents/clientes/$(incoming().clienteId))
+        && get(/databases/$(database)/documents/clientes/$(incoming().clienteId)).data.comercioId == incoming().comercioId
+        && get(/databases/$(database)/documents/clientes/$(incoming().clienteId)).data.ativo == true
+        && get(/databases/$(database)/documents/clientes/$(incoming().clienteId)).data.anonimizado == false
+        && (incoming().tipo != 'estorno' || isDono(incoming().comercioId));
+      allow update: if isValidId(lancamentoId)
+        && isValidLancamento(incoming())
+        && isMembroComercio(existing().comercioId)
+        && existing().tipo == 'compra'
+        && incoming().comercioId == existing().comercioId
+        && incoming().clienteId == existing().clienteId
+        && incoming().tipo == existing().tipo
+        && incoming().valor == existing().valor
+        && incoming().forma == existing().forma
+        && incoming().itens == existing().itens
+        && incoming().vencimento == existing().vencimento
+        && incoming().autorizadoExcecaoPor == existing().autorizadoExcecaoPor
+        && incoming().estornoDe == existing().estornoDe
+        && incoming().justificativa == existing().justificativa
+        && incoming().idempotencyKey == existing().idempotencyKey
+        && incoming().criadoPor == existing().criadoPor
+        && incoming().criadoEm == existing().criadoEm
+        && incoming().diff(existing()).affectedKeys().hasOnly(['valorEmAberto']);
+      allow delete: if false;
+    }
+
+    match /linksConsulta/{tokenHash} {
+      allow get: if isValidId(tokenHash) && isMembroComercio(resource.data.comercioId);
+      allow list: if isMembroComercio(resource.data.comercioId);
+      allow create: if isValidId(tokenHash)
+        && isValidLinkConsulta(incoming())
+        && isMembroComercio(incoming().comercioId)
+        && incoming().criadoPor == request.auth.uid
+        && incoming().criadoEm == request.time;
+      allow update: if isValidId(tokenHash)
+        && isValidLinkConsulta(incoming())
+        && isMembroComercio(existing().comercioId)
+        && incoming().comercioId == existing().comercioId
+        && incoming().clienteId == existing().clienteId
+        && incoming().criadoPor == existing().criadoPor
+        && incoming().criadoEm == existing().criadoEm
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'revogado', 'expiraEm', 'tentativasErradas', 'bloqueadoAte'
+        ]);
+      allow delete: if false;
+    }
+
+    match /consultasPublicas/{tokenHash} {
+      allow list: if false;
+      allow get: if isValidId(tokenHash) && (
+        isMembroComercio(resource.data.comercioId)
+        || (resource.data.revogado == false
+            && resource.data.expiraEm > request.time
+            && resource.data.bloqueadoAte <= request.time)
+      );
+      allow create: if isValidId(tokenHash)
+        && isValidConsultaPublica(incoming())
+        && isMembroComercio(incoming().comercioId)
+        && incoming().criadoEm == request.time
+        && incoming().atualizadoEm == request.time;
+      allow update: if isValidId(tokenHash)
+        && isValidConsultaPublica(incoming())
+        && incoming().comercioId == existing().comercioId
+        && incoming().clienteId == existing().clienteId
+        && incoming().criadoEm == existing().criadoEm
+        && incoming().atualizadoEm == request.time
+        && (
+          (isMembroComercio(existing().comercioId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'comercioNome', 'ultimos4Hash', 'payloadCifrado',
+              'expiraEm', 'revogado', 'tentativasErradas', 'bloqueadoAte', 'atualizadoEm'
+            ]))
+          || (existing().revogado == false
+            && existing().expiraEm > request.time
+            && existing().bloqueadoAte <= request.time
+            && existing().tentativasErradas < 5
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'tentativasErradas', 'bloqueadoAte', 'atualizadoEm'
+            ])
+            && incoming().tentativasErradas == existing().tentativasErradas + 1
+            && (incoming().tentativasErradas < 5 || incoming().bloqueadoAte > request.time))
+        );
+      allow delete: if false;
+    }
+
+    match /acessosLink/{acessoId} {
+      allow get: if isValidId(acessoId) && isDono(resource.data.comercioId);
+      allow list: if isDono(resource.data.comercioId);
+      allow create: if isValidId(acessoId)
+        && isValidAcessoLink(incoming())
+        && incoming().quando == request.time;
+      allow update, delete: if false;
+    }
+
+    match /auditoria/{auditoriaId} {
+      allow get: if isValidId(auditoriaId) && isDono(resource.data.comercioId);
+      allow list: if isDono(resource.data.comercioId);
+      allow create: if isValidId(auditoriaId)
+        && isValidAuditoria(incoming())
+        && isMembroComercio(incoming().comercioId)
+        && incoming().quem == request.auth.uid
+        && incoming().quando == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

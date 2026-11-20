@@ -1,0 +1,6 @@
+{
+  "name": "Caderneta Digital",
+  "description": "Controle de fiado e cobrança para mercadinhos, padarias, açougues e lojas de bairro.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
