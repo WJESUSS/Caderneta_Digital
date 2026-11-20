@@ -16,7 +16,7 @@ import { CobrancaPage } from './pages/CobrancaPage';
 import { ConfiguracoesPage } from './pages/ConfiguracoesPage';
 
 const AppRoutes: React.FC = () => {
-  const { firebaseUser, usuario, loadingAuth, loadingComercio, needsOnboarding, logout } =
+  const { firebaseUser, usuario, loadingAuth, loadingComercio, needsOnboarding, authError, logout } =
     useAuth();
 
   const renderProtected = (element: React.ReactNode) => {
@@ -32,7 +32,7 @@ const AppRoutes: React.FC = () => {
       );
     }
 
-    if (!firebaseUser || needsOnboarding) {
+    if (!firebaseUser || needsOnboarding || authError) {
       return <LoginPage />;
     }
 
@@ -67,7 +67,7 @@ const AppRoutes: React.FC = () => {
       <Route
         path="/login"
         element={
-          firebaseUser && !needsOnboarding ? <Navigate to="/" replace /> : <LoginPage />
+          firebaseUser && !needsOnboarding && !authError ? <Navigate to="/" replace /> : <LoginPage />
         }
       />
 

@@ -12,8 +12,12 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID || rawConfig.appId,
 };
 
+const customProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+const isCustomProject = Boolean(customProjectId && customProjectId !== rawConfig.projectId);
+
 const firestoreDatabaseId =
-  import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || rawConfig.firestoreDatabaseId;
+  import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID ||
+  (isCustomProject ? '(default)' : rawConfig.firestoreDatabaseId);
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 

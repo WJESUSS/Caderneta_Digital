@@ -111,16 +111,17 @@ export async function criarComercioEDono(params: {
     criadoEm: serverTimestamp(),
   });
 
-  batch.set(auditRef, {
-    comercioId,
-    quem: params.uid,
-    acao: 'comercio_criado',
-    detalhes: `Comércio "${params.nomeComercio.trim()}" criado pelo Dono.`,
-    quando: serverTimestamp(),
-  });
-
   try {
     await batch.commit();
+    await writeBatch(db)
+      .set(auditRef, {
+        comercioId,
+        quem: params.uid,
+        acao: 'comercio_criado',
+        detalhes: `Comércio "${params.nomeComercio.trim()}" criado pelo Dono.`,
+        quando: serverTimestamp(),
+      })
+      .commit();
     return { comercioId };
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `comercios/${comercioId}`);

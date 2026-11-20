@@ -20,6 +20,7 @@ interface AuthContextValue {
   loadingAuth: boolean;
   loadingComercio: boolean;
   needsOnboarding: boolean;
+  authError: string | null;
   offlineQueueCount: number;
   refreshProfile: () => Promise<void>;
   refreshOfflineQueueCount: () => void;
@@ -28,6 +29,17 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function formatProfileLoadError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (raw.includes('Missing or insufficient permissions') || raw.includes('PERMISSION_DENIED')) {
+    return 'Sem permissão para acessar o Firestore. Publique as regras do arquivo firestore.rules no Firebase Console do projeto configurado.';
+  }
+  if (raw.includes('the client is offline') || raw.includes('NOT_FOUND')) {
+    return 'Não foi possível conectar ao banco Firestore. Verifique se o banco (default) foi criado no Firebase Console e se as variáveis VITE_FIREBASE_* estão corretas.';
+  }
+  return 'Não foi possível carregar seu perfil no Firestore. Tente recarregar a página.';
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [usuario, setUsuario] = useState<Usuario | null>(null);
@@ -35,6 +47,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [loadingComercio, setLoadingComercio] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [offlineQueueCount, setOfflineQueueCount] = useState(() => getOfflineQueue().length);
   const isOnline = useOnlineStatus();
 
@@ -48,12 +61,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUsuario(null);
       setComercio(null);
       setClientes([]);
+      setAuthError(null);
       return;
     }
     setLoadingComercio(true);
+    setAuthError(null);
     try {
       const prof = await carregarUsuarioAtual(current.uid);
       setUsuario(prof);
+    } catch (e) {
+      console.error(e);
+      setAuthError(formatProfileLoadError(e));
+      setUsuario(null);
     } finally {
       setLoadingComercio(false);
     }
@@ -66,15 +85,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUsuario(null);
         setComercio(null);
         setClientes([]);
+        setAuthError(null);
         setLoadingAuth(false);
         return;
       }
       setLoadingComercio(true);
+      setAuthError(null);
       try {
         const prof = await carregarUsuarioAtual(user.uid);
         setUsuario(prof);
       } catch (e) {
         console.error(e);
+        setAuthError(formatProfileLoadError(e));
         setUsuario(null);
       } finally {
         setLoadingComercio(false);
@@ -162,7 +184,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clientes,
         loadingAuth,
         loadingComercio,
-        needsOnboarding: Boolean(firebaseUser && !loadingAuth && !loadingComercio && !usuario),
+        needsOnboarding: Boolean(firebaseUser && !loadingAuth && !loadingComercio && !usuario && !authError),
+        authError,
         offlineQueueCount,
         refreshProfile,
         refreshOfflineQueueCount,

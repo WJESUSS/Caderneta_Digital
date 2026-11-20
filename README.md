@@ -47,7 +47,21 @@ npm run lint:rules
 
 ---
 
-## 4. Como publicar no Google Cloud Run
+## 4. Como publicar na Vercel
+
+O projeto já inclui `vercel.json` (com rotas SPA para `/qr` e `/s/:token`, cabeçalhos de segurança e PWA) e funções serverless em `/api/*`:
+
+1. Faça o push do projeto para o GitHub (ou use `npx vercel --prod`).
+2. Na Vercel, importe o repositório com o preset **Vite** (Build Command: `npm run build`, Output Directory: `dist`).
+3. Após o primeiro deploy, copie a URL gerada pela Vercel (ex.: `https://caderneta-digital.vercel.app`).
+4. Em **Settings → Environment Variables** na Vercel, adicione:
+   - `VITE_APP_PUBLIC_URL` = `https://caderneta-digital.vercel.app`
+5. Faça um **Redeploy** para que a variável `VITE_APP_PUBLIC_URL` entre no build do QR Code.
+6. No **Firebase Console → Authentication → Settings → Authorized domains**, adicione `caderneta-digital.vercel.app`.
+
+---
+
+## 5. Como publicar no Google Cloud Run
 
 ```bash
 gcloud run deploy caderneta-digital \
@@ -63,16 +77,16 @@ gcloud run deploy caderneta-digital \
 
 ---
 
-## 5. Como gerar o QR Code de produção
+## 6. Como gerar o QR Code de produção
 
-1. Com `VITE_APP_PUBLIC_URL` apontando para o endereço HTTPS do Cloud Run, abra `https://SEU-SERVICO.run.app/qr` (rota pública, sem login).
+1. Com `VITE_APP_PUBLIC_URL` apontando para o endereço HTTPS publicado (Vercel ou Cloud Run), abra `https://SEU-DOMINIO/qr` (rota pública, sem login).
 2. Confirme que não aparece nenhum alerta vermelho (se aparecer, o endereço ainda está como `localhost` ou `http://`).
 3. Clique em **Imprimir cartaz (A4)** para imprimir no balcão do comércio ou **Baixar PNG** para enviar na arte de divulgação.
 4. Teste escaneando com a câmera de um celular usando dados móveis (4G/5G).
 
 ---
 
-## 6. Backup diário do Firestore (RNF05)
+## 7. Backup diário do Firestore (RNF05)
 
 Em produção, ative exportação agendada diária do Firestore para um bucket do Cloud Storage:
 

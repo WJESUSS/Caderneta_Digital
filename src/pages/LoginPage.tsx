@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   createUserWithEmailAndPassword,
@@ -15,11 +15,17 @@ import { useAuth } from '../context/AuthContext';
 import { PWAInstallButton } from '../components/PWAInstallBanner';
 
 export const LoginPage: React.FC = () => {
-  const { firebaseUser, needsOnboarding, refreshProfile } = useAuth();
+  const { firebaseUser, needsOnboarding, authError, refreshProfile } = useAuth();
   const [modo, setModo] = useState<'entrar' | 'criar'>('entrar');
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [nomeDono, setNomeDono] = useState('');
+
+  useEffect(() => {
+    if (needsOnboarding && firebaseUser?.displayName && !nomeDono) {
+      setNomeDono(firebaseUser.displayName);
+    }
+  }, [needsOnboarding, firebaseUser, nomeDono]);
   const [nomeComercio, setNomeComercio] = useState('');
   const [limitePadraoStr, setLimitePadraoStr] = useState('200,00');
   const [pin4, setPin4] = useState('');
@@ -40,8 +46,15 @@ export const LoginPage: React.FC = () => {
     if (msg.includes('auth/operation-not-allowed')) {
       return 'Login por E-mail/Senha ainda não foi ativado no Firebase Console. Você pode entrar com Google abaixo ou ativar E-mail/Senha no Console.';
     }
+    if (msg.includes('auth/unauthorized-domain')) {
+      const host = typeof window !== 'undefined' ? window.location.hostname : '';
+      return `Domínio não autorizado no Firebase (${host}). Adicione "${host}" em Firebase Console → Authentication → Settings → Authorized domains (ou entre com E-mail e senha).`;
+    }
     if (msg.includes('auth/popup-closed-by-user')) {
       return 'Janela de login do Google foi fechada antes de concluir.';
+    }
+    if (msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')) {
+      return 'Sem permissão para gravar no Firestore. Publique as regras do arquivo firestore.rules no Firebase Console.';
     }
     return msg || 'Não foi possível autenticar. Tente novamente.';
   };
@@ -132,6 +145,39 @@ export const LoginPage: React.FC = () => {
     }
   };
 
+  if (authError && firebaseUser) {
+    return (
+      <div className="min-h-screen bg-[#FAFAF8] flex flex-col justify-center px-4 py-8">
+        <div className="mx-auto w-full max-w-md rounded-2xl border border-red-200 bg-white p-6 sm:p-8 space-y-4">
+          <div className="flex items-center gap-3">
+            <BookOpen className="h-7 w-7 text-red-700" />
+            <h1 className="text-2xl font-bold text-[#14211E]">Configuração pendente no Firestore</h1>
+          </div>
+          <p className="text-base text-slate-700 leading-relaxed">{authError}</p>
+          <p className="text-sm text-slate-600">
+            Conta conectada: <span className="font-medium text-[#14211E]">{firebaseUser.email}</span>
+          </p>
+          <div className="pt-2 space-y-3">
+            <button
+              type="button"
+              onClick={() => void refreshProfile()}
+              className="min-h-[48px] w-full rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
+            >
+              Tentar novamente
+            </button>
+            <button
+              type="button"
+              onClick={() => signOut(auth)}
+              className="min-h-[44px] w-full text-center text-base font-medium text-slate-600 hover:text-[#14211E]"
+            >
+              Sair da conta
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (needsOnboarding && firebaseUser) {
     return (
       <div className="min-h-screen bg-[#FAFAF8] flex flex-col justify-center px-4 py-8">
@@ -153,7 +199,7 @@ export const LoginPage: React.FC = () => {
                 id="onb-dono"
                 type="text"
                 required
-                defaultValue={firebaseUser.displayName || ''}
+                value={nomeDono}
                 onChange={(e) => setNomeDono(e.target.value)}
                 placeholder="Ex: Maria da Silva"
                 className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 text-base text-[#14211E] focus:border-teal-700 focus:outline-none"
