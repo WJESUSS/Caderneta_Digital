@@ -21,11 +21,18 @@ export const LoginPage: React.FC = () => {
   const [senha, setSenha] = useState('');
   const [nomeDono, setNomeDono] = useState('');
 
+  const prefilledUidRef = React.useRef<string | null>(null);
+
   useEffect(() => {
-    if (needsOnboarding && firebaseUser?.displayName && !nomeDono) {
-      setNomeDono(firebaseUser.displayName);
+    if (
+      needsOnboarding &&
+      firebaseUser?.displayName &&
+      prefilledUidRef.current !== firebaseUser.uid
+    ) {
+      prefilledUidRef.current = firebaseUser.uid;
+      setNomeDono((prev) => prev || firebaseUser.displayName || '');
     }
-  }, [needsOnboarding, firebaseUser, nomeDono]);
+  }, [needsOnboarding, firebaseUser]);
   const [nomeComercio, setNomeComercio] = useState('');
   const [limitePadraoStr, setLimitePadraoStr] = useState('200,00');
   const [pin4, setPin4] = useState('');

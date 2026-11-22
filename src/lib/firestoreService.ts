@@ -595,6 +595,7 @@ async function fetchClientLancamentos(comercioId: string, clienteId: string) {
         id: d.id,
         tipo: data.tipo as Lancamento['tipo'],
         valor: Number(data.valor ?? 0),
+        valorEmAberto: Number(data.valorEmAberto ?? 0),
         forma: data.forma as FormaPagamento,
         itens: String(data.itens ?? ''),
         vencimento: String(data.vencimento ?? ''),
@@ -705,13 +706,6 @@ export async function registrarCompra(params: {
         criadoEm: serverTimestamp(),
       });
 
-      for (const l of existingLancamentos) {
-        if (l.tipo === 'compra') {
-          const aberto = novoCalc.comprasAtualizadas.get(l.id) ?? 0;
-          tx.update(l.ref, { valorEmAberto: aberto });
-        }
-      }
-
       tx.update(cliRef, {
         saldoDevedor: novoCalc.saldoDevedor,
         valorVencido: novoCalc.valorVencido,
@@ -728,8 +722,15 @@ export async function registrarCompra(params: {
         quando: serverTimestamp(),
       });
     });
+  } catch (err) {
+    if (err instanceof Error && (err.message.includes('limite') || err.message.includes('Cliente'))) {
+      throw err;
+    }
+    handleFirestoreError(err, OperationType.WRITE, 'lancamentos');
+  }
 
-    if (novoLancamentoCalc) {
+  if (novoLancamentoCalc) {
+    try {
       await sincronizarConsultasPublicasCliente({
         comercioId: params.comercioId,
         comercioNome: params.comercioNome,
@@ -756,15 +757,12 @@ export async function registrarCompra(params: {
           },
         ],
       });
+    } catch (syncErr) {
+      console.warn('Aviso ao sincronizar link público após compra:', syncErr);
     }
-
-    return { lancamentoId, novoSaldo: resultadoCarteiraFinal.saldoDevedor };
-  } catch (err) {
-    if (err instanceof Error && (err.message.includes('limite') || err.message.includes('Cliente'))) {
-      throw err;
-    }
-    handleFirestoreError(err, OperationType.WRITE, 'lancamentos');
   }
+
+  return { lancamentoId, novoSaldo: resultadoCarteiraFinal.saldoDevedor };
 }
 
 export async function registrarPagamento(params: {
@@ -855,9 +853,10 @@ export async function registrarPagamento(params: {
 
       for (const l of existingLancamentos) {
         if (l.tipo === 'compra') {
-          tx.update(l.ref, {
-            valorEmAberto: novoCalc.comprasAtualizadas.get(l.id) ?? 0,
-          });
+          const aberto = novoCalc.comprasAtualizadas.get(l.id) ?? 0;
+          if (aberto !== l.valorEmAberto) {
+            tx.update(l.ref, { valorEmAberto: aberto });
+          }
         }
       }
 
@@ -877,8 +876,15 @@ export async function registrarPagamento(params: {
         quando: serverTimestamp(),
       });
     });
+  } catch (err) {
+    if (err instanceof Error && (err.message.includes('maior') || err.message.includes('saldo'))) {
+      throw err;
+    }
+    handleFirestoreError(err, OperationType.WRITE, 'lancamentos');
+  }
 
-    if (novoLancamentoCalc) {
+  if (novoLancamentoCalc) {
+    try {
       await sincronizarConsultasPublicasCliente({
         comercioId: params.comercioId,
         comercioNome: params.comercioNome,
@@ -905,15 +911,12 @@ export async function registrarPagamento(params: {
           },
         ],
       });
+    } catch (syncErr) {
+      console.warn('Aviso ao sincronizar link público após pagamento:', syncErr);
     }
-
-    return { lancamentoId, novoSaldo: resultadoCarteiraFinal.saldoDevedor };
-  } catch (err) {
-    if (err instanceof Error && (err.message.includes('maior') || err.message.includes('saldo'))) {
-      throw err;
-    }
-    handleFirestoreError(err, OperationType.WRITE, 'lancamentos');
   }
+
+  return { lancamentoId, novoSaldo: resultadoCarteiraFinal.saldoDevedor };
 }
 
 export async function estornarLancamento(params: {
@@ -994,9 +997,10 @@ export async function estornarLancamento(params: {
 
       for (const l of existingLancamentos) {
         if (l.tipo === 'compra') {
-          tx.update(l.ref, {
-            valorEmAberto: novoCalc.comprasAtualizadas.get(l.id) ?? 0,
-          });
+          const aberto = novoCalc.comprasAtualizadas.get(l.id) ?? 0;
+          if (aberto !== l.valorEmAberto) {
+            tx.update(l.ref, { valorEmAberto: aberto });
+          }
         }
       }
 
@@ -1016,7 +1020,14 @@ export async function estornarLancamento(params: {
         quando: serverTimestamp(),
       });
     });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('estorn')) {
+      throw err;
+    }
+    handleFirestoreError(err, OperationType.WRITE, 'lancamentos');
+  }
 
+  try {
     await sincronizarConsultasPublicasCliente({
       comercioId: params.comercioId,
       comercioNome: params.comercioNome,
@@ -1043,11 +1054,8 @@ export async function estornarLancamento(params: {
         },
       ],
     });
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('estorn')) {
-      throw err;
-    }
-    handleFirestoreError(err, OperationType.WRITE, 'lancamentos');
+  } catch (syncErr) {
+    console.warn('Aviso ao sincronizar link público após estorno:', syncErr);
   }
 }
 

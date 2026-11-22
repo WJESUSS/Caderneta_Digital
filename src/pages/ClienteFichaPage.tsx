@@ -133,7 +133,12 @@ export const ClienteFichaPage: React.FC = () => {
       }
       setTokenAtual(rawToken);
     } catch (err) {
-      setErroLink(err instanceof Error ? err.message : 'Erro ao gerar link.');
+      const msg = err instanceof Error ? err.message : 'Erro ao gerar link.';
+      setErroLink(
+        msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')
+          ? 'Sem permissão no Firestore para gerar link. Confira se as regras de firestore.rules estão publicadas no Firebase Console.'
+          : msg
+      );
     } finally {
       setGerandoLink(false);
     }
@@ -170,7 +175,12 @@ export const ClienteFichaPage: React.FC = () => {
       setEstornoAlvo(null);
       setJustificativa('');
     } catch (err) {
-      setErroEstorno(err instanceof Error ? err.message : 'Erro ao estornar lançamento.');
+      const msg = err instanceof Error ? err.message : 'Erro ao estornar lançamento.';
+      setErroEstorno(
+        msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')
+          ? 'Sem permissão no Firestore para estornar. Confira se as regras de firestore.rules estão publicadas no Firebase Console.'
+          : msg
+      );
     } finally {
       setEstornando(false);
     }

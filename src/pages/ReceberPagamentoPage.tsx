@@ -119,7 +119,21 @@ export const ReceberPagamentoPage: React.FC = () => {
         offline: false,
       });
     } catch (err) {
-      setErro(err instanceof Error ? err.message : 'Erro ao registrar pagamento.');
+      const msg = err instanceof Error ? err.message : 'Erro ao registrar pagamento.';
+      if (msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')) {
+        setErro(
+          'Sem permissão no Firestore para gravar este pagamento. Confira se as regras completas de firestore.rules estão publicadas no Firebase Console.'
+        );
+      } else if (msg.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(msg);
+          setErro(String(parsed?.error || 'Erro ao registrar pagamento.'));
+        } catch {
+          setErro(msg);
+        }
+      } else {
+        setErro(msg);
+      }
     } finally {
       setSalvando(false);
     }
