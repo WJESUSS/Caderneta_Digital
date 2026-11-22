@@ -13,7 +13,11 @@ import {
   writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  type UserCredential,
+} from 'firebase/auth';
 import { createSecondaryAuthApp, db, handleFirestoreError, OperationType } from './firebase';
 import {
   calcularVencimentoCompra,
@@ -1145,24 +1149,70 @@ export async function criarAtendente(params: {
   senhaProvisoria: string;
   donoUid: string;
 }): Promise<void> {
+  const nomeLimpo = params.nome.trim();
+  const emailLimpo = params.email.trim().toLowerCase();
+
+  if (nomeLimpo.length < 2 || nomeLimpo.length > 80) {
+    throw new Error('Informe o nome do(a) atendente com pelo menos 2 letras.');
+  }
+  if (!emailLimpo.includes('@') || emailLimpo.length < 5) {
+    throw new Error('Informe um e-mail válido para o(a) atendente.');
+  }
   if (params.senhaProvisoria.length < 6) {
     throw new Error('A senha provisória precisa ter pelo menos 6 caracteres.');
   }
-  const { secondaryAuth, cleanup } = createSecondaryAuthApp();
-  try {
-    const cred = await createUserWithEmailAndPassword(
-      secondaryAuth,
-      params.email.trim().toLowerCase(),
-      params.senhaProvisoria
-    );
-    const novoUid = cred.user.uid;
 
+  const { secondaryAuth, cleanup } = createSecondaryAuthApp();
+  let cred: UserCredential | null = null;
+  let createdNewAuthUser = false;
+
+  try {
+    try {
+      cred = await createUserWithEmailAndPassword(
+        secondaryAuth,
+        emailLimpo,
+        params.senhaProvisoria
+      );
+      createdNewAuthUser = true;
+    } catch (authErr) {
+      const msg = authErr instanceof Error ? authErr.message : String(authErr);
+      if (msg.includes('auth/email-already-in-use')) {
+        try {
+          cred = await signInWithEmailAndPassword(
+            secondaryAuth,
+            emailLimpo,
+            params.senhaProvisoria
+          );
+        } catch {
+          throw new Error(
+            'Este e-mail já está cadastrado no Firebase (em outra conta ou tentativa anterior). Use outro e-mail para o(a) atendente ou remova o usuário antigo em Authentication → Users no Firebase Console.'
+          );
+        }
+        if (cred.user.uid === params.donoUid) {
+          throw new Error(
+            'Você não pode cadastrar o seu próprio e-mail de Dono como atendente. Use um e-mail diferente para o(a) atendente.'
+          );
+        }
+      } else if (msg.includes('auth/invalid-email')) {
+        throw new Error('O e-mail informado é inválido.');
+      } else if (msg.includes('auth/weak-password')) {
+        throw new Error('A senha provisória é muito fraca. Use pelo menos 6 caracteres.');
+      } else if (msg.includes('auth/operation-not-allowed')) {
+        throw new Error(
+          'Ative o login por E-mail/Senha em Firebase Console → Authentication → Sign-in method para cadastrar atendentes.'
+        );
+      } else {
+        throw authErr;
+      }
+    }
+
+    const novoUid = cred.user.uid;
     const batch = writeBatch(db);
     batch.set(doc(db, 'usuarios', novoUid), {
       comercioId: params.comercioId,
       perfil: 'atendente',
-      nome: params.nome.trim(),
-      email: params.email.trim().toLowerCase(),
+      nome: nomeLimpo,
+      email: emailLimpo,
       ativo: true,
       criadoPor: params.donoUid,
       criadoEm: serverTimestamp(),
@@ -1171,10 +1221,24 @@ export async function criarAtendente(params: {
       comercioId: params.comercioId,
       quem: params.donoUid,
       acao: 'atendente_criado',
-      detalhes: `Atendente "${params.nome.trim()}" (${params.email.trim()}) criado.`,
+      detalhes: `Atendente "${nomeLimpo}" (${emailLimpo}) criado.`,
       quando: serverTimestamp(),
     });
-    await batch.commit();
+
+    try {
+      await batch.commit();
+    } catch (fsErr) {
+      if (createdNewAuthUser && cred) {
+        await cred.user.delete().catch(() => {});
+      }
+      const fsMsg = fsErr instanceof Error ? fsErr.message : String(fsErr);
+      if (!createdNewAuthUser && (fsMsg.includes('permission') || fsMsg.includes('PERMISSION_DENIED') || fsMsg.includes('already-exists'))) {
+        throw new Error(
+          'Este e-mail já está vinculado a uma conta existente no sistema. Use outro e-mail para o(a) atendente.'
+        );
+      }
+      handleFirestoreError(fsErr, OperationType.CREATE, `usuarios/${novoUid}`);
+    }
   } finally {
     await cleanup();
   }

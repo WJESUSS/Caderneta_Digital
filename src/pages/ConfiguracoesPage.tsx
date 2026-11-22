@@ -85,12 +85,19 @@ export const ConfiguracoesPage: React.FC = () => {
     e.preventDefault();
     setMsgAtt(null);
     setErroAtt(null);
+
+    const emailClean = attEmail.trim().toLowerCase();
+    if (equipe.some((m) => m.email.toLowerCase() === emailClean)) {
+      setErroAtt('Este e-mail já faz parte da equipe deste comércio.');
+      return;
+    }
+
     setCriandoAtt(true);
     try {
       await criarAtendente({
         comercioId: comercio.id,
         nome: attNome,
-        email: attEmail,
+        email: emailClean,
         senhaProvisoria: attSenha,
         donoUid: usuario.uid,
       });
@@ -99,7 +106,12 @@ export const ConfiguracoesPage: React.FC = () => {
       setAttSenha('');
       setMsgAtt('Atendente criado! Ele já pode entrar com o e-mail e a senha provisória.');
     } catch (err) {
-      setErroAtt(err instanceof Error ? err.message : 'Erro ao criar atendente.');
+      const msg = err instanceof Error ? err.message : 'Erro ao criar atendente.';
+      if (msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')) {
+        setErroAtt('Sem permissão no Firestore para cadastrar atendente. Confira as regras publicadas.');
+      } else {
+        setErroAtt(msg);
+      }
     } finally {
       setCriandoAtt(false);
     }
