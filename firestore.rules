@@ -48,7 +48,8 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'nome', 'limitePadrao', 'pinHash', 'pinSalt',
-          'pinTentativasErradas', 'pinBloqueadoAte', 'donoUid', 'criadoEm'
+          'pinTentativasErradas', 'pinBloqueadoAte', 'donoUid', 'criadoEm',
+          'pixChave', 'pixRecebedor', 'whatsappContato'
         ])
         && data.nome is string && data.nome.size() >= 2 && data.nome.size() <= 80
         && data.limitePadrao is int && data.limitePadrao >= 0 && data.limitePadrao <= 100000000
@@ -57,7 +58,10 @@ service cloud.firestore {
         && data.pinTentativasErradas is int && data.pinTentativasErradas >= 0 && data.pinTentativasErradas <= 5
         && data.pinBloqueadoAte is timestamp
         && isValidId(data.donoUid)
-        && data.criadoEm is timestamp;
+        && data.criadoEm is timestamp
+        && (!('pixChave' in data) || (data.pixChave is string && data.pixChave.size() <= 140))
+        && (!('pixRecebedor' in data) || (data.pixRecebedor is string && data.pixRecebedor.size() <= 60))
+        && (!('whatsappContato' in data) || (data.whatsappContato is string && data.whatsappContato.size() <= 20 && (data.whatsappContato == '' || data.whatsappContato.matches('^\\+55\\d{10,11}$'))));
     }
 
     function isValidUsuario(data) {
@@ -83,7 +87,7 @@ service cloud.firestore {
           'comercioId', 'nome', 'whatsapp', 'consentimentoWhatsapp', 'consentimentoEm',
           'limiteCredito', 'diaVencimento', 'ativo', 'anonimizado',
           'saldoDevedor', 'valorVencido', 'valorAVencer', 'proximoVencimento',
-          'criadoEm', 'atualizadoEm'
+          'observacaoDono', 'criadoEm', 'atualizadoEm'
         ])
         && isValidId(data.comercioId)
         && data.nome is string && data.nome.size() >= 2 && data.nome.size() <= 100
@@ -100,6 +104,7 @@ service cloud.firestore {
         && data.valorAVencer is int && data.valorAVencer >= 0 && data.valorAVencer <= 100000000
         && data.saldoDevedor == data.valorVencido + data.valorAVencer
         && data.proximoVencimento is string && data.proximoVencimento.size() <= 10
+        && (!('observacaoDono' in data) || (data.observacaoDono is string && data.observacaoDono.size() <= 300))
         && data.criadoEm is timestamp
         && data.atualizadoEm is timestamp;
     }
@@ -212,7 +217,8 @@ service cloud.firestore {
         && (
           (isDono(comercioId)
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'nome', 'limitePadrao', 'pinHash', 'pinSalt', 'pinTentativasErradas', 'pinBloqueadoAte'
+              'nome', 'limitePadrao', 'pinHash', 'pinSalt', 'pinTentativasErradas', 'pinBloqueadoAte',
+              'pixChave', 'pixRecebedor', 'whatsappContato'
             ]))
           || (isMembroComercio(comercioId)
             && incoming().diff(existing()).affectedKeys().hasOnly([
@@ -281,7 +287,8 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'nome', 'whatsapp', 'consentimentoWhatsapp', 'consentimentoEm',
               'limiteCredito', 'diaVencimento', 'ativo', 'anonimizado',
-              'saldoDevedor', 'valorVencido', 'valorAVencer', 'proximoVencimento', 'atualizadoEm'
+              'saldoDevedor', 'valorVencido', 'valorAVencer', 'proximoVencimento',
+              'observacaoDono', 'atualizadoEm'
             ]))
           || (isMembroComercio(existing().comercioId)
             && existing().anonimizado == false

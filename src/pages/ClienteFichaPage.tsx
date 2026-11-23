@@ -13,13 +13,16 @@ import {
 import { useAuth } from '../context/AuthContext';
 import {
   buildWhatsAppUrl,
+  estaPertoDoLimite,
   formatCentavos,
   formatDateBR,
   formatWhatsAppDisplay,
+  parseBRLToCentavos,
   type Lancamento,
   type LinkConsulta,
 } from '../lib/businessRules';
 import {
+  ajustarLimiteCliente,
   estornarLancamento,
   gerarLinkConsulta,
   observarLancamentosCliente,
@@ -51,6 +54,12 @@ export const ClienteFichaPage: React.FC = () => {
   const [justificativa, setJustificativa] = useState('');
   const [estornando, setEstornando] = useState(false);
   const [erroEstorno, setErroEstorno] = useState<string | null>(null);
+
+  // Modal de ajuste de limite (só Dono)
+  const [limiteModalOpen, setLimiteModalOpen] = useState(false);
+  const [novoLimiteStr, setNovoLimiteStr] = useState('');
+  const [salvandoLimite, setSalvandoLimite] = useState(false);
+  const [erroLimite, setErroLimite] = useState<string | null>(null);
 
   useEffect(() => {
     if (!comercio || !id) return;
@@ -124,6 +133,9 @@ export const ClienteFichaPage: React.FC = () => {
       const { rawToken, tokenHash } = await gerarLinkConsulta({
         comercioId: comercio.id,
         comercioNome: comercio.nome,
+        pixChave: comercio.pixChave,
+        pixRecebedor: comercio.pixRecebedor,
+        comercioWhatsapp: comercio.whatsappContato,
         cliente,
         lancamentos,
         uid: usuario.uid,
@@ -186,6 +198,45 @@ export const ClienteFichaPage: React.FC = () => {
     }
   };
 
+  const abrirModalLimite = () => {
+    setErroLimite(null);
+    setNovoLimiteStr((cliente.limiteCredito / 100).toFixed(2).replace('.', ','));
+    setLimiteModalOpen(true);
+  };
+
+  const handleConfirmarAjusteLimite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!comercio || !usuario || !isDono) return;
+    setErroLimite(null);
+    const novoCentavos = parseBRLToCentavos(novoLimiteStr);
+    if (novoCentavos < 0) {
+      setErroLimite('Informe um valor válido maior ou igual a R$ 0,00.');
+      return;
+    }
+    setSalvandoLimite(true);
+    try {
+      await ajustarLimiteCliente({
+        comercioId: comercio.id,
+        clienteId: cliente.id,
+        clienteNome: cliente.nome,
+        limiteAnteriorCentavos: cliente.limiteCredito,
+        novoLimiteCentavos: novoCentavos,
+        uid: usuario.uid,
+        responsavelNome: usuario.nome,
+      });
+      setLimiteModalOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao ajustar limite.';
+      setErroLimite(
+        msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')
+          ? 'Sem permissão no Firestore para alterar limite. Apenas o Dono pode ajustar o limite de crédito.'
+          : msg
+      );
+    } finally {
+      setSalvandoLimite(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Topo */}
@@ -200,7 +251,14 @@ export const ClienteFichaPage: React.FC = () => {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div>
-            <h1 className="text-2xl font-bold text-[#14211E]">{cliente.nome}</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-bold text-[#14211E]">{cliente.nome}</h1>
+              {estaPertoDoLimite(cliente.saldoDevedor, cliente.limiteCredito) && (
+                <span className="inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-900">
+                  Perto do limite
+                </span>
+              )}
+            </div>
             <p className="text-sm text-slate-600">
               {formatWhatsAppDisplay(cliente.whatsapp)} · Vencimento todo dia {cliente.diaVencimento}
               {!cliente.ativo ? ' · Inativo' : ''}
@@ -208,13 +266,25 @@ export const ClienteFichaPage: React.FC = () => {
           </div>
         </div>
 
-        <Link
-          to={`/clientes/${cliente.id}/editar`}
-          className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-[#D4D4CE] bg-white px-4 py-2 text-base font-semibold text-[#14211E] hover:bg-slate-50"
-        >
-          <Edit3 className="h-4 w-4" />
-          <span>Editar</span>
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {isDono && !cliente.anonimizado && (
+            <button
+              type="button"
+              onClick={abrirModalLimite}
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-teal-700 bg-teal-50 px-4 py-2 text-base font-semibold text-teal-900 hover:bg-teal-100"
+            >
+              <Edit3 className="h-4 w-4" />
+              <span>Ajustar limite de crédito</span>
+            </button>
+          )}
+          <Link
+            to={`/clientes/${cliente.id}/editar`}
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-[#D4D4CE] bg-white px-4 py-2 text-base font-semibold text-[#14211E] hover:bg-slate-50"
+          >
+            <Edit3 className="h-4 w-4" />
+            <span>Editar</span>
+          </Link>
+        </div>
       </div>
 
       {/* Resumo financeiro */}
@@ -505,6 +575,83 @@ export const ClienteFichaPage: React.FC = () => {
                   className="min-h-[48px] flex-1 rounded-xl bg-red-700 px-4 text-base font-semibold text-white hover:bg-red-800 disabled:opacity-50"
                 >
                   {estornando ? 'Estornando...' : 'Confirmar estorno'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Ajuste de Limite (Somente Dono) */}
+      {isDono && limiteModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="limite-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-[#E4E4DF] bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <h2 id="limite-title" className="text-xl font-bold text-[#14211E]">
+                Ajustar limite de crédito
+              </h2>
+              <button
+                type="button"
+                onClick={() => setLimiteModalOpen(false)}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100"
+                aria-label="Fechar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="mt-2 text-sm text-slate-600">
+              Cliente: <strong className="text-[#14211E]">{cliente.nome}</strong> · Limite atual:{' '}
+              <strong className="font-mono-nums">{formatCentavos(cliente.limiteCredito)}</strong>
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              A alteração será registrada na auditoria com data e responsável ({usuario?.nome}).
+            </p>
+
+            <form onSubmit={handleConfirmarAjusteLimite} className="mt-4 space-y-4">
+              <div>
+                <label htmlFor="novo-limite-input" className="block text-base font-semibold text-[#14211E]">
+                  Novo limite de crédito (R$)
+                </label>
+                <input
+                  id="novo-limite-input"
+                  type="text"
+                  inputMode="decimal"
+                  required
+                  autoFocus
+                  value={novoLimiteStr}
+                  onChange={(e) => {
+                    setErroLimite(null);
+                    setNovoLimiteStr(e.target.value);
+                  }}
+                  placeholder="200,00"
+                  className="mt-1.5 min-h-[52px] w-full rounded-xl border border-[#D4D4CE] px-4 font-mono-nums text-xl font-bold text-[#14211E] focus:border-teal-700 focus:outline-none"
+                />
+              </div>
+
+              {erroLimite && (
+                <p className="rounded-xl bg-red-50 p-3 text-base text-red-800">{erroLimite}</p>
+              )}
+
+              <div className="flex flex-col-reverse sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={() => setLimiteModalOpen(false)}
+                  className="min-h-[48px] flex-1 rounded-xl border border-[#D4D4CE] px-4 text-base font-semibold text-[#14211E]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={salvandoLimite}
+                  className="min-h-[48px] flex-1 rounded-xl bg-teal-700 px-4 text-base font-semibold text-white hover:bg-teal-800 disabled:opacity-50"
+                >
+                  {salvandoLimite ? 'Salvando...' : 'Salvar novo limite'}
                 </button>
               </div>
             </form>

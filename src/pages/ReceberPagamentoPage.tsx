@@ -1,9 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Search } from 'lucide-react';
+import { ArrowLeft, Search } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
-  buildWhatsAppUrl,
   formatCentavos,
   formatWhatsAppDisplay,
   parseBRLToCentavos,
@@ -12,6 +11,7 @@ import {
 import { registrarPagamento } from '../lib/firestoreService';
 import { enqueueOfflineLancamento, generateIdempotencyKey } from '../lib/offlineQueue';
 import { useOnlineStatus } from '../hooks/usePWAInstall';
+import { ComprovanteCard, type ComprovanteDados } from '../components/ComprovanteCard';
 
 type FormaRecebimento = 'dinheiro' | 'pix_manual' | 'debito';
 
@@ -26,16 +26,10 @@ export const ReceberPagamentoPage: React.FC = () => {
   const [busca, setBusca] = useState('');
   const [valorStr, setValorStr] = useState('');
   const [forma, setForma] = useState<FormaRecebimento>('dinheiro');
+  const [pixConfirmadoExtrato, setPixConfirmadoExtrato] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const [concluido, setConcluido] = useState<{
-    clienteNome: string;
-    whatsapp: string;
-    valor: number;
-    novoSaldo: number;
-    forma: FormaRecebimento;
-    offline: boolean;
-  } | null>(null);
+  const [concluido, setConcluido] = useState<ComprovanteDados | null>(null);
 
   const clientesComSaldo = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -55,6 +49,9 @@ export const ReceberPagamentoPage: React.FC = () => {
 
   const valorCentavos = parseBRLToCentavos(valorStr);
 
+  const labelForma = (f: FormaRecebimento) =>
+    f === 'dinheiro' ? 'Dinheiro' : f === 'pix_manual' ? 'Pix manual' : 'Débito';
+
   const handleQuitarTudo = () => {
     if (!clienteSelecionado) return;
     setErro(null);
@@ -72,7 +69,13 @@ export const ReceberPagamentoPage: React.FC = () => {
       return;
     }
 
+    if (forma === 'pix_manual' && !pixConfirmadoExtrato) {
+      setErro('Confirme no extrato bancário que o Pix caiu antes de concluir o pagamento.');
+      return;
+    }
+
     const idempotencyKey = generateIdempotencyKey('pag');
+    const agora = new Date();
     setSalvando(true);
     try {
       if (!isOnline) {
@@ -86,15 +89,22 @@ export const ReceberPagamentoPage: React.FC = () => {
           forma,
           itens: '',
           autorizadoExcecaoPor: '',
-          enqueuedAt: Date.now(),
+          enqueuedAt: agora.getTime(),
         });
         refreshOfflineQueueCount();
         setConcluido({
+          tipo: 'pagamento',
+          comercioNome: comercio.nome,
           clienteNome: clienteSelecionado.nome,
-          whatsapp: clienteSelecionado.whatsapp,
+          clienteWhatsapp: clienteSelecionado.whatsapp,
+          saldoAnterior: clienteSelecionado.saldoDevedor,
           valor: valorCentavos,
           novoSaldo: check.novoSaldo,
-          forma,
+          limiteCredito: clienteSelecionado.limiteCredito,
+          formaLabel: labelForma(forma),
+          dataHora: agora,
+          lancamentoId: idempotencyKey,
+          registradoPorNome: usuario.nome,
           offline: true,
         });
         return;
@@ -111,11 +121,18 @@ export const ReceberPagamentoPage: React.FC = () => {
       });
 
       setConcluido({
+        tipo: 'pagamento',
+        comercioNome: comercio.nome,
         clienteNome: clienteSelecionado.nome,
-        whatsapp: clienteSelecionado.whatsapp,
+        clienteWhatsapp: clienteSelecionado.whatsapp,
+        saldoAnterior: res.saldoAnterior,
         valor: valorCentavos,
         novoSaldo: res.novoSaldo,
-        forma,
+        limiteCredito: res.limiteCredito,
+        formaLabel: labelForma(forma),
+        dataHora: agora,
+        lancamentoId: res.lancamentoId,
+        registradoPorNome: usuario.nome,
         offline: false,
       });
     } catch (err) {
@@ -139,56 +156,34 @@ export const ReceberPagamentoPage: React.FC = () => {
     }
   };
 
-  const labelForma = (f: FormaRecebimento) =>
-    f === 'dinheiro' ? 'Dinheiro' : f === 'pix_manual' ? 'Pix (manual)' : 'Débito';
-
   if (concluido) {
-    const msgWhats = `Olá, ${concluido.clienteNome.split(' ')[0]}! Recebemos seu pagamento de ${formatCentavos(
-      concluido.valor
-    )} (${labelForma(concluido.forma)}) em ${comercio?.nome || 'nosso comércio'}. ${
-      concluido.novoSaldo === 0
-        ? 'Sua conta está quitada!'
-        : `Saldo restante: ${formatCentavos(concluido.novoSaldo)}.`
-    } Muito obrigado!`;
-
     return (
-      <div className="mx-auto max-w-lg rounded-2xl border border-[#E4E4DF] bg-white p-6 sm:p-8 text-center">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-teal-50 text-teal-700">
-          <CheckCircle2 className="h-8 w-8" />
-        </div>
-        <h1 className="mt-4 text-2xl font-bold text-[#14211E]">
-          {concluido.offline ? 'Pagamento salvo na fila offline' : 'Pagamento registrado!'}
-        </h1>
-        <p className="mt-2 text-base text-slate-600">
-          {concluido.clienteNome} ·{' '}
-          <strong className="font-mono-nums text-[#14211E]">{formatCentavos(concluido.valor)}</strong>{' '}
-          ({labelForma(concluido.forma)})
-        </p>
-        <p className="mt-1 text-base text-slate-700">
-          Saldo restante:{' '}
-          <strong className="font-mono-nums text-[#14211E]">
-            {formatCentavos(concluido.novoSaldo)}
-          </strong>
-        </p>
-
-        <div className="mt-6 space-y-3">
-          <a
-            href={buildWhatsAppUrl(concluido.whatsapp, msgWhats)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex min-h-[52px] w-full items-center justify-center rounded-xl bg-[#15803D] px-5 py-3 text-base font-semibold text-white hover:bg-[#166534]"
-          >
-            Enviar comprovante por WhatsApp
-          </a>
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="flex min-h-[48px] w-full items-center justify-center rounded-xl border border-[#D4D4CE] bg-white px-5 py-3 text-base font-semibold text-[#14211E] hover:bg-slate-50"
-          >
-            Voltar ao início
-          </button>
-        </div>
-      </div>
+      <ComprovanteCard
+        dados={concluido}
+        acoesExtras={
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                setConcluido(null);
+                setValorStr('');
+                setPixConfirmadoExtrato(false);
+                setClienteId('');
+              }}
+              className="flex min-h-[52px] w-full items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
+            >
+              Receber outro pagamento
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="flex min-h-[48px] w-full items-center justify-center rounded-xl border border-[#D4D4CE] bg-white px-5 py-3 text-base font-semibold text-[#14211E] hover:bg-slate-50"
+            >
+              Voltar ao início
+            </button>
+          </>
+        }
+      />
     );
   }
 
@@ -233,7 +228,10 @@ export const ReceberPagamentoPage: React.FC = () => {
                 <li key={c.id}>
                   <button
                     type="button"
-                    onClick={() => setClienteId(c.id)}
+                    onClick={() => {
+                      setClienteId(c.id);
+                      setPixConfirmadoExtrato(false);
+                    }}
                     className="flex min-h-[64px] w-full items-center justify-between gap-4 py-3 px-2 text-left hover:bg-[#FAFAF8] rounded-xl"
                   >
                     <div>
@@ -267,7 +265,10 @@ export const ReceberPagamentoPage: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={() => setClienteId('')}
+              onClick={() => {
+                setClienteId('');
+                setPixConfirmadoExtrato(false);
+              }}
               className="min-h-[44px] rounded-xl border border-[#D4D4CE] px-3 text-sm font-semibold text-[#14211E] hover:bg-slate-50"
             >
               Trocar
@@ -316,7 +317,13 @@ export const ReceberPagamentoPage: React.FC = () => {
                 <button
                   key={opt.id}
                   type="button"
-                  onClick={() => setForma(opt.id)}
+                  onClick={() => {
+                    setForma(opt.id);
+                    setErro(null);
+                    if (opt.id !== 'pix_manual') {
+                      setPixConfirmadoExtrato(false);
+                    }
+                  }}
                   className={`min-h-[52px] rounded-xl border px-3 py-2 text-base font-semibold transition-colors ${
                     forma === opt.id
                       ? 'border-teal-700 bg-teal-50 text-teal-900'
@@ -328,9 +335,25 @@ export const ReceberPagamentoPage: React.FC = () => {
               ))}
             </div>
             {forma === 'pix_manual' && (
-              <p className="mt-2 text-sm text-slate-600">
-                Confirme no seu banco que o Pix caiu antes de concluir. Este MVP registra apenas manualmente.
-              </p>
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
+                <p className="text-sm text-amber-950">
+                  Registro manual (sem baixa automática nem taxas). Confira seu aplicativo do banco antes de confirmar.
+                </p>
+                <label className="flex items-start gap-3 min-h-[44px] cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={pixConfirmadoExtrato}
+                    onChange={(e) => {
+                      setPixConfirmadoExtrato(e.target.checked);
+                      setErro(null);
+                    }}
+                    className="mt-1 h-5 w-5 rounded border-amber-400 text-teal-700 focus:ring-teal-700"
+                  />
+                  <span className="text-base font-semibold text-[#14211E]">
+                    Conferi no extrato bancário que o Pix caiu
+                  </span>
+                </label>
+              </div>
             )}
           </div>
 
@@ -342,7 +365,11 @@ export const ReceberPagamentoPage: React.FC = () => {
 
           <button
             type="submit"
-            disabled={salvando || valorCentavos <= 0}
+            disabled={
+              salvando ||
+              valorCentavos <= 0 ||
+              (forma === 'pix_manual' && !pixConfirmadoExtrato)
+            }
             className="min-h-[56px] w-full rounded-2xl bg-teal-700 px-6 py-4 text-lg font-bold text-white hover:bg-teal-800 disabled:opacity-50"
           >
             {salvando ? 'Registrando...' : 'Confirmar pagamento'}

@@ -1,12 +1,17 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { BookOpen, Lock, ShieldCheck } from 'lucide-react';
+import QRCode from 'qrcode';
+import { BookOpen, Check, Copy, Lock, MessageCircle, QrCode, ShieldCheck } from 'lucide-react';
 import {
+  buildWhatsAppUrl,
   formatCentavos,
   formatDateBR,
   type ResumoPublicoCliente,
 } from '../lib/businessRules';
+import { gerarPayloadPixEstatico } from '../lib/pix';
 import { consultarSaldoPublicoPorToken } from '../lib/firestoreService';
+
+type OpcaoValorPix = 'vencido' | 'total' | 'sem_valor';
 
 export const PublicConsultaPage: React.FC = () => {
   const { token = '' } = useParams<{ token: string }>();
@@ -15,6 +20,11 @@ export const PublicConsultaPage: React.FC = () => {
   const [erro, setErro] = useState<string | null>(null);
   const [indisponivel, setIndisponivel] = useState(false);
   const [resumo, setResumo] = useState<ResumoPublicoCliente | null>(null);
+
+  const [opcaoValorPix, setOpcaoValorPix] = useState<OpcaoValorPix>('sem_valor');
+  const [chaveCopiada, setChaveCopiada] = useState(false);
+  const [copiaColaCopiado, setCopiaColaCopiado] = useState(false);
+  const pixCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const handleConsultar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,6 +38,13 @@ export const PublicConsultaPage: React.FC = () => {
       const resp = await consultarSaldoPublicoPorToken(token, digitos);
       if (resp.status === 'ok') {
         setResumo(resp.resumo);
+        if (resp.resumo.valorVencido > 0) {
+          setOpcaoValorPix('vencido');
+        } else if (resp.resumo.saldoDevedor > 0) {
+          setOpcaoValorPix('total');
+        } else {
+          setOpcaoValorPix('sem_valor');
+        }
       } else if (resp.status === 'invalido_digitos') {
         setErro(
           `Dígitos não conferem. Você ainda tem ${resp.tentativasRestantes} tentativa(s).`
@@ -43,6 +60,72 @@ export const PublicConsultaPage: React.FC = () => {
       setCarregando(false);
     }
   };
+
+  const valorPixCentavos = useMemo(() => {
+    if (!resumo) return undefined;
+    if (opcaoValorPix === 'vencido' && resumo.valorVencido > 0) return resumo.valorVencido;
+    if (opcaoValorPix === 'total' && resumo.saldoDevedor > 0) return resumo.saldoDevedor;
+    return undefined;
+  }, [resumo, opcaoValorPix]);
+
+  const pixPayload = useMemo(() => {
+    if (!resumo || !resumo.pixChave) return '';
+    return gerarPayloadPixEstatico({
+      chavePix: resumo.pixChave,
+      nomeRecebedor: resumo.pixRecebedor || resumo.comercioNome,
+      valorCentavos: valorPixCentavos,
+    });
+  }, [resumo, valorPixCentavos]);
+
+  useEffect(() => {
+    if (!pixPayload || !pixCanvasRef.current) return;
+    void QRCode.toCanvas(pixCanvasRef.current, pixPayload, {
+      width: 220,
+      margin: 4,
+      errorCorrectionLevel: 'M',
+      color: {
+        dark: '#000000',
+        light: '#FFFFFF',
+      },
+    });
+  }, [pixPayload]);
+
+  const handleCopiarChave = async () => {
+    if (!resumo?.pixChave) return;
+    try {
+      await navigator.clipboard.writeText(resumo.pixChave);
+      setChaveCopiada(true);
+      setTimeout(() => setChaveCopiada(false), 2500);
+    } catch {
+      setChaveCopiada(false);
+    }
+  };
+
+  const handleCopiarCopiaCola = async () => {
+    if (!pixPayload) return;
+    try {
+      await navigator.clipboard.writeText(pixPayload);
+      setCopiaColaCopiado(true);
+      setTimeout(() => setCopiaColaCopiado(false), 2500);
+    } catch {
+      setCopiaColaCopiado(false);
+    }
+  };
+
+  const whatsappAvisoUrl = useMemo(() => {
+    if (!resumo) return '';
+    const valorTexto = valorPixCentavos
+      ? formatCentavos(valorPixCentavos)
+      : formatCentavos(resumo.saldoDevedor);
+    const msg = `Olá! Aqui é ${resumo.primeiroNome}. Acabei de fazer um Pix${
+      valorPixCentavos || resumo.saldoDevedor > 0 ? ` de ${valorTexto}` : ''
+    } para acertar minha caderneta em ${resumo.comercioNome}. Vou enviar o comprovante aqui!`;
+
+    if (resumo.comercioWhatsapp) {
+      return buildWhatsAppUrl(resumo.comercioWhatsapp, msg);
+    }
+    return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  }, [resumo, valorPixCentavos]);
 
   return (
     <div className="min-h-screen bg-[#FAFAF8] px-4 py-8">
@@ -154,6 +237,128 @@ export const PublicConsultaPage: React.FC = () => {
                 )}
               </div>
             </div>
+
+            {/* Cartão Pix estático — exibido SOMENTE após validação dos 4 últimos dígitos */}
+            {resumo.pixChave && (
+              <div className="rounded-2xl border border-[#E4E4DF] bg-white p-6 space-y-4">
+                <div className="flex items-center gap-2 text-[#14211E]">
+                  <QrCode className="h-5 w-5 text-teal-700" />
+                  <h2 className="text-lg font-bold">Vai acertar no Pix?</h2>
+                </div>
+
+                <div className="rounded-xl border border-[#ECECE7] bg-[#FAFAF8] p-4 space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Recebedor
+                  </p>
+                  <p className="text-base font-bold text-[#14211E]">
+                    {resumo.pixRecebedor || resumo.comercioNome}
+                  </p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500 pt-1">
+                    Chave Pix
+                  </p>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <p className="font-mono-nums text-sm sm:text-base font-semibold text-[#14211E] break-all">
+                      {resumo.pixChave}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleCopiarChave}
+                      className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-white px-4 py-2 text-sm font-semibold text-[#14211E] hover:bg-slate-50 shrink-0"
+                    >
+                      {chaveCopiada ? (
+                        <Check className="h-4 w-4 text-teal-700" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                      <span>{chaveCopiada ? 'Chave copiada' : 'Copiar chave'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-semibold text-[#14211E] mb-2">
+                    Escolha o valor do QR Code Pix:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {resumo.valorVencido > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setOpcaoValorPix('vencido')}
+                        className={`min-h-[48px] rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
+                          opcaoValorPix === 'vencido'
+                            ? 'border-teal-700 bg-teal-50 text-teal-900'
+                            : 'border-[#D4D4CE] bg-white text-[#14211E] hover:bg-slate-50'
+                        }`}
+                      >
+                        Vencido ({formatCentavos(resumo.valorVencido)})
+                      </button>
+                    )}
+
+                    {resumo.saldoDevedor > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setOpcaoValorPix('total')}
+                        className={`min-h-[48px] rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
+                          opcaoValorPix === 'total'
+                            ? 'border-teal-700 bg-teal-50 text-teal-900'
+                            : 'border-[#D4D4CE] bg-white text-[#14211E] hover:bg-slate-50'
+                        }`}
+                      >
+                        Total ({formatCentavos(resumo.saldoDevedor)})
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setOpcaoValorPix('sem_valor')}
+                      className={`min-h-[48px] rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
+                        opcaoValorPix === 'sem_valor'
+                          ? 'border-teal-700 bg-teal-50 text-teal-900'
+                          : 'border-[#D4D4CE] bg-white text-[#14211E] hover:bg-slate-50'
+                      }`}
+                    >
+                      Sem valor definido
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-center rounded-xl border border-[#ECECE7] bg-white p-4">
+                  <canvas
+                    ref={pixCanvasRef}
+                    aria-label="QR Code Pix estático"
+                    className="max-w-full h-auto block"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopiarCopiaCola}
+                    className="mt-3 inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-white px-4 py-2 text-sm font-semibold text-[#14211E] hover:bg-slate-50"
+                  >
+                    {copiaColaCopiado ? (
+                      <Check className="h-4 w-4 text-teal-700" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                    <span>
+                      {copiaColaCopiado ? 'Código Pix copiado' : 'Copiar Pix Copia e Cola'}
+                    </span>
+                  </button>
+                </div>
+
+                <p className="text-sm text-slate-600 text-center">
+                  Depois de pagar, avise a loja pelo WhatsApp.
+                </p>
+
+                <a
+                  href={whatsappAvisoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#15803D] px-5 py-3 text-base font-semibold text-white hover:bg-[#166534]"
+                >
+                  <MessageCircle className="h-5 w-5" />
+                  <span>Já paguei, avisar no WhatsApp</span>
+                </a>
+              </div>
+            )}
 
             <div className="rounded-2xl border border-[#E4E4DF] bg-white p-6">
               <h2 className="text-lg font-bold text-[#14211E]">Últimos lançamentos</h2>

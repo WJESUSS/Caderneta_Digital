@@ -1,9 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, CheckCircle2, Delete, Search } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Delete, Search } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
-  buildWhatsAppUrl,
   formatCentavos,
   formatWhatsAppDisplay,
   validarCompra,
@@ -12,6 +11,7 @@ import { registrarCompra } from '../lib/firestoreService';
 import { enqueueOfflineLancamento, generateIdempotencyKey } from '../lib/offlineQueue';
 import { useOnlineStatus } from '../hooks/usePWAInstall';
 import { PinModal } from '../components/PinModal';
+import { ComprovanteCard, type ComprovanteDados } from '../components/ComprovanteCard';
 
 export const NovaCompraPage: React.FC = () => {
   const { clientes, comercio, usuario, refreshOfflineQueueCount } = useAuth();
@@ -27,13 +27,7 @@ export const NovaCompraPage: React.FC = () => {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [pinModalOpen, setPinModalOpen] = useState(false);
-  const [concluido, setConcluido] = useState<{
-    clienteNome: string;
-    whatsapp: string;
-    valor: number;
-    novoSaldo: number;
-    offline: boolean;
-  } | null>(null);
+  const [concluido, setConcluido] = useState<ComprovanteDados | null>(null);
 
   const clientesAtivos = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -81,6 +75,8 @@ export const NovaCompraPage: React.FC = () => {
     setErro(null);
     setSalvando(true);
     const idempotencyKey = generateIdempotencyKey('cmp');
+    const agora = new Date();
+    const itensLimpos = itens.trim();
 
     try {
       if (!isOnline) {
@@ -92,16 +88,25 @@ export const NovaCompraPage: React.FC = () => {
           tipo: 'compra',
           valor: valorCentavos,
           forma: 'fiado',
-          itens: itens.trim(),
+          itens: itensLimpos,
           autorizadoExcecaoPor: autorizadoExcecaoPor || '',
-          enqueuedAt: Date.now(),
+          enqueuedAt: agora.getTime(),
         });
         refreshOfflineQueueCount();
         setConcluido({
+          tipo: 'compra',
+          comercioNome: comercio.nome,
           clienteNome: clienteSelecionado.nome,
-          whatsapp: clienteSelecionado.whatsapp,
+          clienteWhatsapp: clienteSelecionado.whatsapp,
+          saldoAnterior: clienteSelecionado.saldoDevedor,
           valor: valorCentavos,
           novoSaldo: clienteSelecionado.saldoDevedor + valorCentavos,
+          limiteCredito: clienteSelecionado.limiteCredito,
+          formaLabel: 'Fiado',
+          itens: itensLimpos || undefined,
+          dataHora: agora,
+          lancamentoId: idempotencyKey,
+          registradoPorNome: usuario.nome,
           offline: true,
         });
         return;
@@ -112,17 +117,26 @@ export const NovaCompraPage: React.FC = () => {
         comercioNome: comercio.nome,
         clienteId: clienteSelecionado.id,
         valorCentavos,
-        itens: itens.trim(),
+        itens: itensLimpos,
         autorizadoExcecaoPor,
         uid: usuario.uid,
         idempotencyKey,
       });
 
       setConcluido({
+        tipo: 'compra',
+        comercioNome: comercio.nome,
         clienteNome: clienteSelecionado.nome,
-        whatsapp: clienteSelecionado.whatsapp,
+        clienteWhatsapp: clienteSelecionado.whatsapp,
+        saldoAnterior: res.saldoAnterior,
         valor: valorCentavos,
         novoSaldo: res.novoSaldo,
+        limiteCredito: res.limiteCredito,
+        formaLabel: 'Fiado',
+        itens: itensLimpos || undefined,
+        dataHora: agora,
+        lancamentoId: res.lancamentoId,
+        registradoPorNome: usuario.nome,
         offline: false,
       });
     } catch (err) {
@@ -136,16 +150,25 @@ export const NovaCompraPage: React.FC = () => {
           tipo: 'compra',
           valor: valorCentavos,
           forma: 'fiado',
-          itens: itens.trim(),
+          itens: itensLimpos,
           autorizadoExcecaoPor: autorizadoExcecaoPor || '',
-          enqueuedAt: Date.now(),
+          enqueuedAt: agora.getTime(),
         });
         refreshOfflineQueueCount();
         setConcluido({
+          tipo: 'compra',
+          comercioNome: comercio.nome,
           clienteNome: clienteSelecionado.nome,
-          whatsapp: clienteSelecionado.whatsapp,
+          clienteWhatsapp: clienteSelecionado.whatsapp,
+          saldoAnterior: clienteSelecionado.saldoDevedor,
           valor: valorCentavos,
           novoSaldo: clienteSelecionado.saldoDevedor + valorCentavos,
+          limiteCredito: clienteSelecionado.limiteCredito,
+          formaLabel: 'Fiado',
+          itens: itensLimpos || undefined,
+          dataHora: agora,
+          lancamentoId: idempotencyKey,
+          registradoPorNome: usuario.nome,
           offline: true,
         });
       } else {
@@ -188,66 +211,33 @@ export const NovaCompraPage: React.FC = () => {
   };
 
   if (concluido) {
-    const msgWhats = `Olá, ${concluido.clienteNome.split(' ')[0]}! Anotamos sua compra de ${formatCentavos(
-      concluido.valor
-    )} na caderneta de ${comercio?.nome || 'nosso comércio'}. Seu saldo atual é ${formatCentavos(
-      concluido.novoSaldo
-    )}. Obrigado pela preferência!`;
-
     return (
-      <div className="mx-auto max-w-lg rounded-2xl border border-[#E4E4DF] bg-white p-6 sm:p-8 text-center">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-teal-50 text-teal-700">
-          <CheckCircle2 className="h-8 w-8" />
-        </div>
-        <h1 className="mt-4 text-2xl font-bold text-[#14211E]">
-          {concluido.offline ? 'Compra salva na fila offline' : 'Compra anotada!'}
-        </h1>
-        <p className="mt-2 text-base text-slate-600">
-          {concluido.clienteNome} ·{' '}
-          <strong className="font-mono-nums text-[#14211E]">{formatCentavos(concluido.valor)}</strong>
-        </p>
-        <p className="mt-1 text-base text-slate-700">
-          Novo saldo:{' '}
-          <strong className="font-mono-nums text-[#14211E]">
-            {formatCentavos(concluido.novoSaldo)}
-          </strong>
-        </p>
-        {concluido.offline && (
-          <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
-            Assim que a internet voltar, a compra será enviada automaticamente sem duplicar.
-          </p>
-        )}
-
-        <div className="mt-6 space-y-3">
-          <a
-            href={buildWhatsAppUrl(concluido.whatsapp, msgWhats)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex min-h-[52px] w-full items-center justify-center rounded-xl bg-[#15803D] px-5 py-3 text-base font-semibold text-white hover:bg-[#166534]"
-          >
-            Enviar comprovante por WhatsApp
-          </a>
-          <button
-            type="button"
-            onClick={() => {
-              setConcluido(null);
-              setCentavosDigits('');
-              setItens('');
-              setClienteId('');
-            }}
-            className="flex min-h-[52px] w-full items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
-          >
-            Anotar outra compra
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="flex min-h-[48px] w-full items-center justify-center rounded-xl border border-[#D4D4CE] bg-white px-5 py-3 text-base font-semibold text-[#14211E] hover:bg-slate-50"
-          >
-            Voltar ao início
-          </button>
-        </div>
-      </div>
+      <ComprovanteCard
+        dados={concluido}
+        acoesExtras={
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                setConcluido(null);
+                setCentavosDigits('');
+                setItens('');
+                setClienteId('');
+              }}
+              className="flex min-h-[52px] w-full items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
+            >
+              Anotar outra compra
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="flex min-h-[48px] w-full items-center justify-center rounded-xl border border-[#D4D4CE] bg-white px-5 py-3 text-base font-semibold text-[#14211E] hover:bg-slate-50"
+            >
+              Voltar ao início
+            </button>
+          </>
+        }
+      />
     );
   }
 

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -38,6 +39,11 @@ export const LoginPage: React.FC = () => {
   const [pin4, setPin4] = useState('');
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
+  const [modoResetSenha, setModoResetSenha] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const [resetErro, setResetErro] = useState<string | null>(null);
+  const [enviandoReset, setEnviandoReset] = useState(false);
 
   const traduzirErroAuth = (err: unknown): string => {
     const msg = err instanceof Error ? err.message : String(err);
@@ -76,6 +82,37 @@ export const LoginPage: React.FC = () => {
       setErro(traduzirErroAuth(err));
     } finally {
       setCarregando(false);
+    }
+  };
+
+  const handleEnviarResetSenha = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetMsg(null);
+    setResetErro(null);
+    const emailLimpo = resetEmail.trim();
+    if (!emailLimpo || !emailLimpo.includes('@')) {
+      setResetErro('Informe um e-mail válido.');
+      return;
+    }
+    setEnviandoReset(true);
+    try {
+      await sendPasswordResetEmail(auth, emailLimpo);
+      setResetMsg(
+        'Enviamos um e-mail com o link para criar uma nova senha. Confira também a caixa de spam.'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('auth/invalid-email')) {
+        setResetErro('O e-mail informado não é válido.');
+      } else if (msg.includes('auth/user-not-found')) {
+        setResetErro('Não encontramos nenhuma conta cadastrada com este e-mail.');
+      } else if (msg.includes('auth/too-many-requests')) {
+        setResetErro('Muitas tentativas seguidas. Aguarde alguns minutos antes de tentar novamente.');
+      } else {
+        setResetErro(traduzirErroAuth(err));
+      }
+    } finally {
+      setEnviandoReset(false);
     }
   };
 
@@ -316,6 +353,7 @@ export const LoginPage: React.FC = () => {
                 type="button"
                 onClick={() => {
                   setModo('entrar');
+                  setModoResetSenha(false);
                   setErro(null);
                 }}
                 className={`min-h-[44px] rounded-lg text-base font-semibold transition-colors ${
@@ -330,6 +368,7 @@ export const LoginPage: React.FC = () => {
                 type="button"
                 onClick={() => {
                   setModo('criar');
+                  setModoResetSenha(false);
                   setErro(null);
                 }}
                 className={`min-h-[44px] rounded-lg text-base font-semibold transition-colors ${
@@ -342,7 +381,64 @@ export const LoginPage: React.FC = () => {
               </button>
             </div>
 
-            {modo === 'entrar' ? (
+            {modo === 'entrar' && modoResetSenha ? (
+              <form onSubmit={handleEnviarResetSenha} className="mt-6 space-y-4">
+                <div>
+                  <h2 className="text-lg font-bold text-[#14211E]">Recuperar senha</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Digite seu e-mail de acesso (Dono ou Atendente) para receber o link de redefinição de senha.
+                  </p>
+                </div>
+
+                <div>
+                  <label htmlFor="reset-email" className="block text-base font-semibold text-[#14211E]">
+                    E-mail cadastrado
+                  </label>
+                  <input
+                    id="reset-email"
+                    type="email"
+                    required
+                    autoFocus
+                    autoComplete="email"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    placeholder="seu@email.com"
+                    className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 text-base text-[#14211E] focus:border-teal-700 focus:outline-none"
+                  />
+                </div>
+
+                {resetErro && (
+                  <p className="rounded-xl bg-red-50 px-4 py-3 text-base text-red-800" role="alert">
+                    {resetErro}
+                  </p>
+                )}
+                {resetMsg && (
+                  <p className="rounded-xl bg-teal-50 px-4 py-3 text-base text-teal-900" role="status">
+                    {resetMsg}
+                  </p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={enviandoReset}
+                  className="min-h-[52px] w-full rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800 disabled:opacity-50"
+                >
+                  {enviandoReset ? 'Enviando...' : 'Enviar link para redefinir senha'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModoResetSenha(false);
+                    setResetErro(null);
+                    setResetMsg(null);
+                  }}
+                  className="min-h-[44px] w-full text-center text-base font-semibold text-teal-800 hover:underline"
+                >
+                  Voltar para entrar
+                </button>
+              </form>
+            ) : modo === 'entrar' ? (
               <form onSubmit={handleEntrar} className="mt-6 space-y-4">
                 <div>
                   <label htmlFor="login-email" className="block text-base font-semibold text-[#14211E]">
@@ -361,9 +457,23 @@ export const LoginPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label htmlFor="login-senha" className="block text-base font-semibold text-[#14211E]">
-                    Senha
-                  </label>
+                  <div className="flex items-center justify-between gap-2">
+                    <label htmlFor="login-senha" className="block text-base font-semibold text-[#14211E]">
+                      Senha
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResetEmail(email);
+                        setResetErro(null);
+                        setResetMsg(null);
+                        setModoResetSenha(true);
+                      }}
+                      className="min-h-[36px] text-sm font-semibold text-teal-800 hover:underline"
+                    >
+                      Esqueci minha senha
+                    </button>
+                  </div>
                   <input
                     id="login-senha"
                     type="password"

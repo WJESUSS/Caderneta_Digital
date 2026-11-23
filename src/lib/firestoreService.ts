@@ -21,6 +21,7 @@ import {
 import { createSecondaryAuthApp, db, handleFirestoreError, OperationType } from './firebase';
 import {
   calcularVencimentoCompra,
+  formatCentavos,
   getBahiaDateString,
   normalizeWhatsAppBR,
   recalcularCarteiraCliente,
@@ -35,6 +36,7 @@ import {
   type ResumoPublicoCliente,
   type Usuario,
 } from './businessRules';
+import { validarChavePix } from './pix';
 import {
   decryptPublicPayload,
   encryptPublicPayload,
@@ -102,6 +104,9 @@ export async function criarComercioEDono(params: {
     pinTentativasErradas: 0,
     pinBloqueadoAte: Timestamp.fromMillis(0),
     donoUid: params.uid,
+    pixChave: '',
+    pixRecebedor: params.nomeComercio.trim().slice(0, 60),
+    whatsappContato: '',
     criadoEm: serverTimestamp(),
   });
 
@@ -155,6 +160,9 @@ export function observarComercio(
         pinBloqueadoAte: toDate(d.pinBloqueadoAte),
         donoUid: String(d.donoUid),
         criadoEm: toDate(d.criadoEm),
+        pixChave: String(d.pixChave ?? ''),
+        pixRecebedor: String(d.pixRecebedor ?? ''),
+        whatsappContato: String(d.whatsappContato ?? ''),
       });
     },
     (err) => {
@@ -194,6 +202,7 @@ export function observarClientes(
             valorVencido: Number(d.valorVencido ?? 0),
             valorAVencer: Number(d.valorAVencer ?? 0),
             proximoVencimento: String(d.proximoVencimento ?? ''),
+            observacaoDono: String(d.observacaoDono ?? ''),
             criadoEm: toDate(d.criadoEm),
             atualizadoEm: toDate(d.atualizadoEm),
           };
@@ -360,6 +369,7 @@ export async function cadastrarCliente(params: {
     valorVencido: 0,
     valorAVencer: 0,
     proximoVencimento: '',
+    observacaoDono: '',
     criadoEm: serverTimestamp(),
     atualizadoEm: serverTimestamp(),
   });
@@ -507,6 +517,9 @@ export async function anonimizarClienteLGPD(params: {
 async function sincronizarConsultasPublicasCliente(params: {
   comercioId: string;
   comercioNome: string;
+  pixChave?: string;
+  pixRecebedor?: string;
+  comercioWhatsapp?: string;
   clienteId: string;
   clienteNome: string;
   clienteWhatsapp: string;
@@ -541,6 +554,19 @@ async function sincronizarConsultasPublicasCliente(params: {
   );
   if (activeLinks.length === 0) return;
 
+  let pixChave = params.pixChave;
+  let pixRecebedor = params.pixRecebedor;
+  let comercioWhatsapp = params.comercioWhatsapp;
+  if (pixChave === undefined || pixRecebedor === undefined || comercioWhatsapp === undefined) {
+    const comSnap = await getDoc(doc(db, 'comercios', params.comercioId));
+    if (comSnap.exists()) {
+      const cd = comSnap.data();
+      pixChave = String(cd.pixChave ?? '');
+      pixRecebedor = String(cd.pixRecebedor ?? '');
+      comercioWhatsapp = String(cd.whatsappContato ?? '');
+    }
+  }
+
   const last4 = params.clienteWhatsapp.slice(-4);
   const primeiroNome = params.clienteNome.trim().split(/\s+/)[0] || 'Cliente';
 
@@ -552,6 +578,9 @@ async function sincronizarConsultasPublicasCliente(params: {
     valorAVencer: params.valorAVencer,
     proximoVencimento: params.proximoVencimento,
     atualizadoEmIso: new Date().toISOString(),
+    pixChave: pixChave || '',
+    pixRecebedor: pixRecebedor || params.comercioNome,
+    comercioWhatsapp: comercioWhatsapp || '',
     lancamentos: params.rawLancamentosDocs
       .slice()
       .sort((a, b) => b.criadoEmMs - a.criadoEmMs)
@@ -619,16 +648,19 @@ export async function registrarCompra(params: {
   autorizadoExcecaoPor?: string;
   uid: string;
   idempotencyKey?: string;
-}): Promise<{ lancamentoId: string; novoSaldo: number }> {
+}): Promise<{ lancamentoId: string; saldoAnterior: number; novoSaldo: number; limiteCredito: number }> {
   const idem = params.idempotencyKey || generateIdempotencyKey('cmp');
 
   const existingLancamentos = await fetchClientLancamentos(params.comercioId, params.clienteId);
   const existingIdem = existingLancamentos.find((l) => l.idempotencyKey === idem);
   if (existingIdem) {
     const cliSnap = await getDoc(doc(db, 'clientes', params.clienteId));
+    const novoSaldoExist = Number(cliSnap.data()?.saldoDevedor ?? 0);
     return {
       lancamentoId: existingIdem.id,
-      novoSaldo: Number(cliSnap.data()?.saldoDevedor ?? 0),
+      saldoAnterior: Math.max(0, novoSaldoExist - existingIdem.valor),
+      novoSaldo: novoSaldoExist,
+      limiteCredito: Number(cliSnap.data()?.limiteCredito ?? 0),
     };
   }
 
@@ -637,6 +669,8 @@ export async function registrarCompra(params: {
   const hojeBahia = getBahiaDateString(agora);
 
   let resultadoCarteiraFinal!: ReturnType<typeof recalcularCarteiraCliente>;
+  let saldoAnterior = 0;
+  let limiteCreditoCliente = 0;
   let clienteNome = '';
   let clienteWhatsapp = '';
   let novoLancamentoCalc: LancamentoCalcInput | null = null;
@@ -655,6 +689,7 @@ export async function registrarCompra(params: {
       clienteNome = String(cli.nome);
       clienteWhatsapp = String(cli.whatsapp);
       const limiteCredito = Number(cli.limiteCredito ?? 0);
+      limiteCreditoCliente = limiteCredito;
       const diaVencimento = Number(cli.diaVencimento ?? 10);
 
       // Recompute authoritative balance from ledger
@@ -667,6 +702,7 @@ export async function registrarCompra(params: {
         criadoEmMs: l.criadoEmMs,
       }));
       const atual = recalcularCarteiraCliente(baseCalc, hojeBahia);
+      saldoAnterior = atual.saldoDevedor;
 
       const check = validarCompra(
         atual.saldoDevedor,
@@ -766,7 +802,12 @@ export async function registrarCompra(params: {
     }
   }
 
-  return { lancamentoId, novoSaldo: resultadoCarteiraFinal.saldoDevedor };
+  return {
+    lancamentoId,
+    saldoAnterior,
+    novoSaldo: resultadoCarteiraFinal.saldoDevedor,
+    limiteCredito: limiteCreditoCliente,
+  };
 }
 
 export async function registrarPagamento(params: {
@@ -777,16 +818,19 @@ export async function registrarPagamento(params: {
   forma: 'dinheiro' | 'pix_manual' | 'debito';
   uid: string;
   idempotencyKey?: string;
-}): Promise<{ lancamentoId: string; novoSaldo: number }> {
+}): Promise<{ lancamentoId: string; saldoAnterior: number; novoSaldo: number; limiteCredito: number }> {
   const idem = params.idempotencyKey || generateIdempotencyKey('pag');
 
   const existingLancamentos = await fetchClientLancamentos(params.comercioId, params.clienteId);
   const existingIdem = existingLancamentos.find((l) => l.idempotencyKey === idem);
   if (existingIdem) {
     const cliSnap = await getDoc(doc(db, 'clientes', params.clienteId));
+    const novoSaldoExist = Number(cliSnap.data()?.saldoDevedor ?? 0);
     return {
       lancamentoId: existingIdem.id,
-      novoSaldo: Number(cliSnap.data()?.saldoDevedor ?? 0),
+      saldoAnterior: novoSaldoExist + existingIdem.valor,
+      novoSaldo: novoSaldoExist,
+      limiteCredito: Number(cliSnap.data()?.limiteCredito ?? 0),
     };
   }
   const lancamentoId = makeDocId('lnc');
@@ -794,6 +838,8 @@ export async function registrarPagamento(params: {
   const hojeBahia = getBahiaDateString(agora);
 
   let resultadoCarteiraFinal!: ReturnType<typeof recalcularCarteiraCliente>;
+  let saldoAnterior = 0;
+  let limiteCreditoCliente = 0;
   let clienteNome = '';
   let clienteWhatsapp = '';
   let novoLancamentoCalc: LancamentoCalcInput | null = null;
@@ -810,6 +856,7 @@ export async function registrarPagamento(params: {
 
       clienteNome = String(cli.nome);
       clienteWhatsapp = String(cli.whatsapp);
+      limiteCreditoCliente = Number(cli.limiteCredito ?? 0);
 
       const baseCalc: LancamentoCalcInput[] = existingLancamentos.map((l) => ({
         id: l.id,
@@ -820,6 +867,7 @@ export async function registrarPagamento(params: {
         criadoEmMs: l.criadoEmMs,
       }));
       const atual = recalcularCarteiraCliente(baseCalc, hojeBahia);
+      saldoAnterior = atual.saldoDevedor;
 
       const check = validarPagamento(atual.saldoDevedor, params.valorCentavos);
       if (!check.permitido) {
@@ -920,7 +968,12 @@ export async function registrarPagamento(params: {
     }
   }
 
-  return { lancamentoId, novoSaldo: resultadoCarteiraFinal.saldoDevedor };
+  return {
+    lancamentoId,
+    saldoAnterior,
+    novoSaldo: resultadoCarteiraFinal.saldoDevedor,
+    limiteCredito: limiteCreditoCliente,
+  };
 }
 
 export async function estornarLancamento(params: {
@@ -1111,11 +1164,47 @@ export async function salvarConfigComercio(params: {
   nome: string;
   limitePadraoCentavos: number;
   novoPin4?: string;
+  pixChave?: string;
+  pixRecebedor?: string;
+  whatsappContato?: string;
   uid: string;
 }): Promise<void> {
+  const nomeLimpo = params.nome.trim();
+  if (nomeLimpo.length < 2 || nomeLimpo.length > 80) {
+    throw new Error('O nome do comércio deve ter entre 2 e 80 caracteres.');
+  }
+
+  let pixChaveNorm = '';
+  const pixChaveRaw = (params.pixChave ?? '').trim();
+  if (pixChaveRaw) {
+    const valid = validarChavePix(pixChaveRaw);
+    if (!valid.valida || !valid.chaveNormalizada) {
+      throw new Error(valid.erro || 'Chave Pix inválida.');
+    }
+    pixChaveNorm = valid.chaveNormalizada;
+  }
+
+  const pixRecebedorLimpo = (params.pixRecebedor ?? '').trim().slice(0, 60);
+  if (pixChaveNorm && pixRecebedorLimpo.length < 2) {
+    throw new Error('Informe o nome do recebedor para exibir no Pix.');
+  }
+
+  let whatsappNorm = '';
+  const whatsappRaw = (params.whatsappContato ?? '').trim();
+  if (whatsappRaw) {
+    const e164 = normalizeWhatsAppBR(whatsappRaw);
+    if (!e164) {
+      throw new Error('WhatsApp do comércio inválido. Informe DDD + número com 10 ou 11 dígitos.');
+    }
+    whatsappNorm = e164;
+  }
+
   const payload: Record<string, unknown> = {
-    nome: params.nome.trim(),
+    nome: nomeLimpo,
     limitePadrao: Math.max(0, Math.round(params.limitePadraoCentavos)),
+    pixChave: pixChaveNorm,
+    pixRecebedor: pixRecebedorLimpo || nomeLimpo.slice(0, 60),
+    whatsappContato: whatsappNorm,
   };
   if (params.novoPin4 && /^\d{4}$/.test(params.novoPin4)) {
     const hashed = await hashPin(params.novoPin4);
@@ -1131,7 +1220,7 @@ export async function salvarConfigComercio(params: {
     comercioId: params.comercioId,
     quem: params.uid,
     acao: 'config_atualizada',
-    detalhes: 'Configurações do comércio atualizadas.',
+    detalhes: 'Configurações do comércio e Pix atualizadas pelo Dono.',
     quando: serverTimestamp(),
   });
 
@@ -1139,6 +1228,125 @@ export async function salvarConfigComercio(params: {
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `comercios/${params.comercioId}`);
+  }
+
+  // Re-sincroniza melhor-esforço dos links públicos ativos para refletir a nova chave Pix
+  try {
+    const [linksSnap, cliSnap, lncSnap] = await Promise.all([
+      getDocs(query(collection(db, 'linksConsulta'), where('comercioId', '==', params.comercioId))),
+      getDocs(query(collection(db, 'clientes'), where('comercioId', '==', params.comercioId))),
+      getDocs(query(collection(db, 'lancamentos'), where('comercioId', '==', params.comercioId))),
+    ]);
+    const activeClientIds = new Set<string>(
+      linksSnap.docs
+        .filter((d) => !d.data().revogado && toDate(d.data().expiraEm).getTime() > Date.now())
+        .map((d) => String(d.data().clienteId))
+    );
+    const hojeBahia = getBahiaDateString();
+    for (const cDoc of cliSnap.docs) {
+      if (!activeClientIds.has(cDoc.id)) continue;
+      const cd = cDoc.data();
+      const cliLancs = lncSnap.docs
+        .filter((ld) => ld.data().clienteId === cDoc.id)
+        .map((ld) => {
+          const d = ld.data();
+          return {
+            id: ld.id,
+            tipo: d.tipo as Lancamento['tipo'],
+            valor: Number(d.valor ?? 0),
+            forma: d.forma as FormaPagamento,
+            itens: String(d.itens ?? ''),
+            vencimento: String(d.vencimento ?? ''),
+            estornoDe: String(d.estornoDe ?? ''),
+            criadoEmMs: toDate(d.criadoEm).getTime() || Date.now(),
+          };
+        });
+      const calc = recalcularCarteiraCliente(cliLancs, hojeBahia);
+      await sincronizarConsultasPublicasCliente({
+        comercioId: params.comercioId,
+        comercioNome: nomeLimpo,
+        pixChave: pixChaveNorm,
+        pixRecebedor: pixRecebedorLimpo || nomeLimpo.slice(0, 60),
+        comercioWhatsapp: whatsappNorm,
+        clienteId: cDoc.id,
+        clienteNome: String(cd.nome),
+        clienteWhatsapp: String(cd.whatsapp),
+        saldoDevedor: calc.saldoDevedor,
+        valorVencido: calc.valorVencido,
+        valorAVencer: calc.valorAVencer,
+        proximoVencimento: calc.proximoVencimento,
+        lancamentos: cliLancs,
+        estornadosIds: calc.estornadosIds,
+        comprasAtualizadas: calc.comprasAtualizadas,
+        rawLancamentosDocs: cliLancs,
+      });
+    }
+  } catch (syncErr) {
+    console.warn('Aviso ao sincronizar links públicos após salvar configurações:', syncErr);
+  }
+}
+
+export async function ajustarLimiteCliente(params: {
+  comercioId: string;
+  clienteId: string;
+  clienteNome: string;
+  limiteAnteriorCentavos: number;
+  novoLimiteCentavos: number;
+  uid: string;
+  responsavelNome: string;
+}): Promise<void> {
+  const novoLimite = Math.max(0, Math.round(params.novoLimiteCentavos));
+  if (novoLimite > 100_000_000) {
+    throw new Error('O limite máximo permitido é de R$ 1.000.000,00.');
+  }
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'clientes', params.clienteId), {
+    limiteCredito: novoLimite,
+    atualizadoEm: serverTimestamp(),
+  });
+  batch.set(doc(db, 'auditoria', makeDocId('aud')), {
+    comercioId: params.comercioId,
+    quem: params.uid,
+    acao: 'limite_ajustado',
+    detalhes: `Limite de ${params.clienteNome} ajustado de ${formatCentavos(
+      params.limiteAnteriorCentavos
+    )} para ${formatCentavos(novoLimite)} por ${params.responsavelNome}.`.slice(0, 300),
+    quando: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `clientes/${params.clienteId}`);
+  }
+}
+
+export async function salvarObservacaoDonoCliente(params: {
+  comercioId: string;
+  clienteId: string;
+  clienteNome: string;
+  observacao: string;
+  uid: string;
+}): Promise<void> {
+  const obs = params.observacao.trim().slice(0, 300);
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'clientes', params.clienteId), {
+    observacaoDono: obs,
+    atualizadoEm: serverTimestamp(),
+  });
+  batch.set(doc(db, 'auditoria', makeDocId('aud')), {
+    comercioId: params.comercioId,
+    quem: params.uid,
+    acao: 'observacao_cobranca_atualizada',
+    detalhes: `Observação de cobrança de ${params.clienteNome} atualizada pelo Dono.`.slice(0, 300),
+    quando: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `clientes/${params.clienteId}`);
   }
 }
 
@@ -1269,6 +1477,9 @@ export async function alternarAtendenteAtivo(params: {
 export async function gerarLinkConsulta(params: {
   comercioId: string;
   comercioNome: string;
+  pixChave?: string;
+  pixRecebedor?: string;
+  comercioWhatsapp?: string;
   cliente: Cliente;
   lancamentos: Lancamento[];
   uid: string;
@@ -1278,6 +1489,19 @@ export async function gerarLinkConsulta(params: {
   const expiraEm = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   const last4 = params.cliente.whatsapp.slice(-4);
   const ultimos4Hash = await sha256Hex(`${tokenHash}:${last4}`);
+
+  let pixChave = params.pixChave;
+  let pixRecebedor = params.pixRecebedor;
+  let comercioWhatsapp = params.comercioWhatsapp;
+  if (pixChave === undefined || pixRecebedor === undefined || comercioWhatsapp === undefined) {
+    const comSnap = await getDoc(doc(db, 'comercios', params.comercioId));
+    if (comSnap.exists()) {
+      const cd = comSnap.data();
+      pixChave = String(cd.pixChave ?? '');
+      pixRecebedor = String(cd.pixRecebedor ?? '');
+      comercioWhatsapp = String(cd.whatsappContato ?? '');
+    }
+  }
 
   const baseCalc: LancamentoCalcInput[] = params.lancamentos.map((l) => ({
     id: l.id,
@@ -1298,6 +1522,9 @@ export async function gerarLinkConsulta(params: {
     valorAVencer: calc.valorAVencer,
     proximoVencimento: calc.proximoVencimento,
     atualizadoEmIso: new Date().toISOString(),
+    pixChave: pixChave || '',
+    pixRecebedor: pixRecebedor || params.comercioNome,
+    comercioWhatsapp: comercioWhatsapp || '',
     lancamentos: params.lancamentos
       .slice()
       .sort((a, b) => b.criadoEm.getTime() - a.criadoEm.getTime())
@@ -1661,6 +1888,7 @@ export async function carregarDadosExemplo(params: {
       valorVencido: calc.valorVencido,
       valorAVencer: calc.valorAVencer,
       proximoVencimento: calc.proximoVencimento,
+      observacaoDono: '',
       criadoEm: serverTimestamp(),
       atualizadoEm: serverTimestamp(),
     });

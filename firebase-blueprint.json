@@ -44,6 +44,21 @@
           "type": "string",
           "format": "date-time",
           "description": "Timestamp de criação."
+        },
+        "pixChave": {
+          "type": "string",
+          "maxLength": 140,
+          "description": "Chave Pix opcional configurada pelo Dono (CPF, CNPJ, e-mail, telefone ou aleatória)."
+        },
+        "pixRecebedor": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "Nome do recebedor exibido no Pix e QR Code estático."
+        },
+        "whatsappContato": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "WhatsApp opcional do comércio para receber avisos de pagamento via Pix."
         }
       },
       "required": [
@@ -147,6 +162,11 @@
         "proximoVencimento": {
           "type": "string",
           "maxLength": 10
+        },
+        "observacaoDono": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Observação interna opcional registrada pelo Dono para cobrança manual."
         },
         "criadoEm": {
           "type": "string",

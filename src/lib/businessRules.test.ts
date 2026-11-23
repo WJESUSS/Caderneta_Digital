@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   avaliarLinkConsulta,
+  calcularDiasAtraso,
   calcularVencimentoCompra,
+  estaPertoDoLimite,
   isCompraVencida,
+  percentualLimiteUsado,
   recalcularCarteiraCliente,
   validarCompra,
   validarPagamento,
   type LancamentoCalcInput,
 } from './businessRules';
+import { crc16CCITT, gerarPayloadPixEstatico, validarChavePix } from './pix';
 import { checkPublicUrlSafety, resolveAppPublicUrl } from './qrUrl';
 
 describe('RN04 e RN05 - Limite de crédito e exceção', () => {
@@ -154,5 +158,101 @@ describe('QR Code - URL de produção', () => {
   it('emite aviso quando aponta para localhost ou HTTP sem TLS', () => {
     expect(checkPublicUrlSafety('http://localhost:3000').isUnsafe).toBe(true);
     expect(checkPublicUrlSafety('http://caderneta.exemplo.com').isUnsafe).toBe(true);
+  });
+});
+
+describe('Tarefa 1 - Validação de Chave Pix e BR Code EMV com CRC16', () => {
+  it('valida CPF, CNPJ, e-mail, celular e chave aleatória corretamente', () => {
+    expect(validarChavePix('52998224725')).toMatchObject({
+      valida: true,
+      tipo: 'cpf',
+      chaveNormalizada: '52998224725',
+    });
+    expect(validarChavePix('111.111.111-11').valida).toBe(false);
+
+    expect(validarChavePix('11.222.333/0001-81')).toMatchObject({
+      valida: true,
+      tipo: 'cnpj',
+      chaveNormalizada: '11222333000181',
+    });
+    expect(validarChavePix('11.222.333/0001-00').valida).toBe(false);
+
+    expect(validarChavePix('Loja@Exemplo.COM')).toMatchObject({
+      valida: true,
+      tipo: 'email',
+      chaveNormalizada: 'loja@exemplo.com',
+    });
+
+    expect(validarChavePix('(71) 99999-8888')).toMatchObject({
+      valida: true,
+      tipo: 'telefone',
+      chaveNormalizada: '+5571999998888',
+    });
+
+    expect(validarChavePix('123E4567-E89B-12D3-A456-426614174000')).toMatchObject({
+      valida: true,
+      tipo: 'aleatoria',
+      chaveNormalizada: '123e4567-e89b-12d3-a456-426614174000',
+    });
+
+    expect(validarChavePix('').valida).toBe(false);
+    expect(validarChavePix('chave-invalida').valida).toBe(false);
+  });
+
+  it('calcula CRC16-CCITT padrão corretamente', () => {
+    expect(crc16CCITT('123456789')).toBe('29B1');
+  });
+
+  it('gera BR Code EMV estático válido com e sem valor', () => {
+    const semValor = gerarPayloadPixEstatico({
+      chavePix: 'loja@exemplo.com',
+      nomeRecebedor: 'Mercadinho São José',
+    });
+    expect(semValor.startsWith('000201')).toBe(true);
+    expect(semValor).toContain('br.gov.bcb.pix');
+    expect(semValor).toContain('5919MERCADINHO SAO JOSE');
+    expect(semValor).not.toContain('540');
+
+    const bodySemValor = semValor.slice(0, -4);
+    const crcSemValor = semValor.slice(-4);
+    expect(crc16CCITT(bodySemValor)).toBe(crcSemValor);
+
+    const comValor = gerarPayloadPixEstatico({
+      chavePix: 'loja@exemplo.com',
+      nomeRecebedor: 'Mercadinho São José',
+      valorCentavos: 2550,
+    });
+    expect(comValor).toContain('540525.50');
+    const bodyComValor = comValor.slice(0, -4);
+    const crcComValor = comValor.slice(-4);
+    expect(crc16CCITT(bodyComValor)).toBe(crcComValor);
+  });
+});
+
+describe('Tarefa 2 - Percentual de limite usado e selo Perto do limite', () => {
+  it('calcula percentual usado com segurança para limites zerados', () => {
+    expect(percentualLimiteUsado(8000, 10000)).toBe(80);
+    expect(percentualLimiteUsado(5000, 0)).toBe(0);
+    expect(percentualLimiteUsado(0, 10000)).toBe(0);
+  });
+
+  it('marca perto do limite apenas entre >= 80% e < 100%', () => {
+    expect(estaPertoDoLimite(7999, 10000)).toBe(false);
+    expect(estaPertoDoLimite(8000, 10000)).toBe(true);
+    expect(estaPertoDoLimite(9999, 10000)).toBe(true);
+    expect(estaPertoDoLimite(10000, 10000)).toBe(false);
+    expect(estaPertoDoLimite(12000, 10000)).toBe(false);
+    expect(estaPertoDoLimite(5000, 0)).toBe(false);
+  });
+});
+
+describe('Tarefa 4 - Cálculo de dias de atraso', () => {
+  it('calcula dias de atraso corretamente a partir do vencimento mais antigo', () => {
+    expect(calcularDiasAtraso('2026-05-10', '2026-05-10')).toBe(0);
+    expect(calcularDiasAtraso('2026-05-10', '2026-05-08')).toBe(0);
+    expect(calcularDiasAtraso('2026-05-10', '2026-05-11')).toBe(1);
+    expect(calcularDiasAtraso('2026-05-10', '2026-05-17')).toBe(7);
+    expect(calcularDiasAtraso('2026-05-10', '2026-05-26')).toBe(16);
+    expect(calcularDiasAtraso('', '2026-05-26')).toBe(0);
   });
 });

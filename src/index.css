@@ -50,4 +50,15 @@
     margin: 0 auto !important;
     page-break-inside: avoid;
   }
+
+  .print-only-receipt {
+    width: 80mm !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding: 8mm !important;
+    border: 1px dashed #14211E !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
 }

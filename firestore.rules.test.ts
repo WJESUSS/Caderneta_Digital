@@ -73,4 +73,16 @@ describe('Firestore Rules Static Security Assertions (Dirty Dozen)', () => {
   it('12. Restricts unauthenticated consultasPublicas updates strictly to +1 failed attempt counter', () => {
     expect(rules).toContain("incoming().tentativasErradas == existing().tentativasErradas + 1");
   });
+
+  it('13. Restricts pixChave, pixRecebedor, whatsappContato and observacaoDono writes strictly to Dono', () => {
+    expect(rules).toContain("'pixChave', 'pixRecebedor', 'whatsappContato'");
+    expect(rules).toContain("'observacaoDono', 'atualizadoEm'");
+    // Confirma que o bloco do atendente em clientes não inclui limiteCredito nem observacaoDono
+    const atendenteClienteMatch = rules.match(
+      /isMembroComercio\(existing\(\)\.comercioId\)\s*&& existing\(\)\.anonimizado == false\s*&& incoming\(\)\.diff\(existing\(\)\)\.affectedKeys\(\)\.hasOnly\(\[([^\]]+)\]\)/
+    );
+    expect(atendenteClienteMatch).not.toBeNull();
+    expect(atendenteClienteMatch?.[1]).not.toContain('limiteCredito');
+    expect(atendenteClienteMatch?.[1]).not.toContain('observacaoDono');
+  });
 });

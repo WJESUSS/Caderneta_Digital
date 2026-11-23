@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { Download, QrCode, ShieldAlert, Sparkles, UserPlus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { parseBRLToCentavos, type Usuario } from '../lib/businessRules';
+import { maskWhatsAppInput, parseBRLToCentavos, type Usuario } from '../lib/businessRules';
+import { validarChavePix } from '../lib/pix';
 import {
   alternarAtendenteAtivo,
   anonimizarClienteLGPD,
@@ -19,6 +20,9 @@ export const ConfiguracoesPage: React.FC = () => {
   const [nomeComercio, setNomeComercio] = useState('');
   const [limiteStr, setLimiteStr] = useState('');
   const [novoPin, setNovoPin] = useState('');
+  const [pixChave, setPixChave] = useState('');
+  const [pixRecebedor, setPixRecebedor] = useState('');
+  const [whatsappContato, setWhatsappContato] = useState('');
   const [salvandoConfig, setSalvandoConfig] = useState(false);
   const [msgConfig, setMsgConfig] = useState<string | null>(null);
   const [erroConfig, setErroConfig] = useState<string | null>(null);
@@ -40,6 +44,11 @@ export const ConfiguracoesPage: React.FC = () => {
     if (comercio) {
       setNomeComercio(comercio.nome);
       setLimiteStr((comercio.limitePadrao / 100).toFixed(2).replace('.', ','));
+      setPixChave(comercio.pixChave || '');
+      setPixRecebedor(comercio.pixRecebedor || comercio.nome);
+      setWhatsappContato(
+        comercio.whatsappContato ? maskWhatsAppInput(comercio.whatsappContato.replace(/^\+55/, '')) : ''
+      );
     }
   }, [comercio]);
 
@@ -55,6 +64,8 @@ export const ConfiguracoesPage: React.FC = () => {
 
   if (!comercio || !usuario) return null;
 
+  const validacaoPixAtual = pixChave.trim() ? validarChavePix(pixChave) : null;
+
   const handleSalvarConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsgConfig(null);
@@ -63,6 +74,13 @@ export const ConfiguracoesPage: React.FC = () => {
       setErroConfig('O PIN deve conter exatamente 4 dígitos numéricos.');
       return;
     }
+    if (pixChave.trim()) {
+      const checkPix = validarChavePix(pixChave);
+      if (!checkPix.valida) {
+        setErroConfig(checkPix.erro || 'Chave Pix inválida.');
+        return;
+      }
+    }
     setSalvandoConfig(true);
     try {
       await salvarConfigComercio({
@@ -70,6 +88,9 @@ export const ConfiguracoesPage: React.FC = () => {
         nome: nomeComercio,
         limitePadraoCentavos: parseBRLToCentavos(limiteStr),
         novoPin4: novoPin || undefined,
+        pixChave: pixChave.trim(),
+        pixRecebedor: pixRecebedor.trim() || nomeComercio.trim(),
+        whatsappContato: whatsappContato.trim(),
         uid: usuario.uid,
       });
       setNovoPin('');
@@ -198,6 +219,71 @@ export const ConfiguracoesPage: React.FC = () => {
                 placeholder="••••"
                 className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 font-mono-nums text-base text-[#14211E] focus:border-teal-700 focus:outline-none"
               />
+            </div>
+
+            <div className="border-t border-[#ECECE7] pt-4 space-y-4">
+              <div>
+                <h3 className="text-base font-bold text-[#14211E]">Pix do comércio (opcional)</h3>
+                <p className="text-sm text-slate-600">
+                  Exibido ao cliente após confirmar os 4 últimos dígitos no link de consulta. O recebimento continua sendo conferido manualmente no extrato.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="cfg-pix-chave" className="block text-base font-semibold text-[#14211E]">
+                  Chave Pix
+                </label>
+                <input
+                  id="cfg-pix-chave"
+                  type="text"
+                  maxLength={140}
+                  value={pixChave}
+                  onChange={(e) => setPixChave(e.target.value)}
+                  placeholder="CPF, CNPJ, e-mail, +55 celular ou chave aleatória"
+                  className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 text-base text-[#14211E] focus:border-teal-700 focus:outline-none"
+                />
+                {validacaoPixAtual && (
+                  <p
+                    className={`mt-1 text-sm ${
+                      validacaoPixAtual.valida ? 'text-teal-800' : 'text-red-700'
+                    }`}
+                  >
+                    {validacaoPixAtual.valida
+                      ? `Chave reconhecida: ${validacaoPixAtual.tipoLabel}`
+                      : validacaoPixAtual.erro}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="cfg-pix-recebedor" className="block text-base font-semibold text-[#14211E]">
+                  Nome do recebedor (aparece no QR Code Pix)
+                </label>
+                <input
+                  id="cfg-pix-recebedor"
+                  type="text"
+                  maxLength={60}
+                  value={pixRecebedor}
+                  onChange={(e) => setPixRecebedor(e.target.value)}
+                  placeholder="Ex: Mercadinho São Jorge"
+                  className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 text-base text-[#14211E] focus:border-teal-700 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="cfg-wpp-contato" className="block text-base font-semibold text-[#14211E]">
+                  WhatsApp da loja (para receber avisos de Pix)
+                </label>
+                <input
+                  id="cfg-wpp-contato"
+                  type="tel"
+                  inputMode="tel"
+                  value={whatsappContato}
+                  onChange={(e) => setWhatsappContato(maskWhatsAppInput(e.target.value))}
+                  placeholder="(71) 99999-9999"
+                  className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 text-base text-[#14211E] focus:border-teal-700 focus:outline-none"
+                />
+              </div>
             </div>
 
             {erroConfig && (

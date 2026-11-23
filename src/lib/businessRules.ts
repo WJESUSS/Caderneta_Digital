@@ -12,6 +12,9 @@ export interface Comercio {
   pinBloqueadoAte: Date;
   donoUid: string;
   criadoEm: Date;
+  pixChave?: string;
+  pixRecebedor?: string;
+  whatsappContato?: string;
 }
 
 export interface Usuario {
@@ -40,6 +43,7 @@ export interface Cliente {
   valorVencido: number;
   valorAVencer: number;
   proximoVencimento: string;
+  observacaoDono?: string;
   criadoEm: Date;
   atualizadoEm: Date;
 }
@@ -95,6 +99,9 @@ export interface ResumoPublicoCliente {
   proximoVencimento: string;
   atualizadoEmIso: string;
   lancamentos: LancamentoResumoPublico[];
+  pixChave?: string;
+  pixRecebedor?: string;
+  comercioWhatsapp?: string;
 }
 
 export const BAHIA_TIMEZONE = 'America/Bahia';
@@ -443,4 +450,47 @@ export function avaliarLinkConsulta(input: AvaliacaoLinkInput): StatusLinkConsul
     return 'invalido_digitos';
   }
   return 'ok';
+}
+
+/**
+ * Calcula percentual de limite usado (0 a 100+); retorna 0 se limite <= 0 ou saldo <= 0.
+ */
+export function percentualLimiteUsado(saldoDevedor: number, limiteCredito: number): number {
+  if (!Number.isFinite(saldoDevedor) || !Number.isFinite(limiteCredito) || limiteCredito <= 0 || saldoDevedor <= 0) {
+    return 0;
+  }
+  return (saldoDevedor / limiteCredito) * 100;
+}
+
+/**
+ * Tarefa 2: Retorna true quando o cliente usou >= 80% e < 100% do limite de crédito.
+ */
+export function estaPertoDoLimite(saldoDevedor: number, limiteCredito: number): boolean {
+  if (!Number.isFinite(saldoDevedor) || !Number.isFinite(limiteCredito) || limiteCredito <= 0 || saldoDevedor <= 0) {
+    return false;
+  }
+  return saldoDevedor * 100 >= limiteCredito * 80 && saldoDevedor < limiteCredito;
+}
+
+/**
+ * Tarefa 4: Calcula quantos dias corridos se passaram desde a data de vencimento YYYY-MM-DD
+ * até a data de referência em America/Bahia. Retorna 0 se ainda não venceu.
+ */
+export function calcularDiasAtraso(
+  vencimentoIso: string,
+  hojeBahia: string = getBahiaDateString()
+): number {
+  if (
+    !vencimentoIso ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(vencimentoIso) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(hojeBahia)
+  ) {
+    return 0;
+  }
+  const [vy, vm, vd] = vencimentoIso.split('-').map(Number);
+  const [hy, hm, hd] = hojeBahia.split('-').map(Number);
+  const vencMs = Date.UTC(vy, vm - 1, vd);
+  const hojeMs = Date.UTC(hy, hm - 1, hd);
+  const diff = Math.floor((hojeMs - vencMs) / 86_400_000);
+  return Math.max(0, diff);
 }

@@ -11,7 +11,12 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { formatCentavos, formatDateBR, formatWhatsAppDisplay } from '../lib/businessRules';
+import {
+  estaPertoDoLimite,
+  formatCentavos,
+  formatDateBR,
+  formatWhatsAppDisplay,
+} from '../lib/businessRules';
 import { carregarDadosExemplo } from '../lib/firestoreService';
 
 export const HomePage: React.FC = () => {
@@ -210,7 +215,14 @@ export const HomePage: React.FC = () => {
                   className="flex min-h-[68px] items-center justify-between gap-4 py-3.5 px-2 hover:bg-[#FAFAF8] rounded-xl transition-colors"
                 >
                   <div className="min-w-0">
-                    <p className="text-base font-bold text-[#14211E] truncate">{cliente.nome}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-base font-bold text-[#14211E] truncate">{cliente.nome}</p>
+                      {estaPertoDoLimite(cliente.saldoDevedor, cliente.limiteCredito) && (
+                        <span className="inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                          Perto do limite
+                        </span>
+                      )}
+                    </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-slate-600">
                       <span>{formatWhatsAppDisplay(cliente.whatsapp)}</span>
                       {cliente.valorVencido > 0 ? (

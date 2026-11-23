@@ -2,9 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertCircle, ChevronRight, Search, UserPlus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { formatCentavos, formatDateBR, formatWhatsAppDisplay } from '../lib/businessRules';
+import {
+  estaPertoDoLimite,
+  formatCentavos,
+  formatDateBR,
+  formatWhatsAppDisplay,
+} from '../lib/businessRules';
 
-type Filtro = 'todos' | 'devedores' | 'vencidos' | 'quitados';
+type Filtro = 'todos' | 'devedores' | 'perto_limite' | 'vencidos' | 'quitados';
 
 export const ClientesPage: React.FC = () => {
   const { clientes } = useAuth();
@@ -17,6 +22,7 @@ export const ClientesPage: React.FC = () => {
       .filter((c) => !c.anonimizado)
       .filter((c) => {
         if (filtro === 'devedores') return c.saldoDevedor > 0;
+        if (filtro === 'perto_limite') return estaPertoDoLimite(c.saldoDevedor, c.limiteCredito);
         if (filtro === 'vencidos') return c.valorVencido > 0;
         if (filtro === 'quitados') return c.saldoDevedor === 0;
         return true;
@@ -63,6 +69,7 @@ export const ClientesPage: React.FC = () => {
               [
                 { id: 'todos', label: 'Todos' },
                 { id: 'devedores', label: 'Com saldo' },
+                { id: 'perto_limite', label: 'Perto do limite' },
                 { id: 'vencidos', label: 'Vencidos' },
                 { id: 'quitados', label: 'Quitados' },
               ] as const
@@ -96,12 +103,19 @@ export const ClientesPage: React.FC = () => {
                   className="flex min-h-[68px] items-center justify-between gap-4 py-3.5 px-2 hover:bg-[#FAFAF8] rounded-xl"
                 >
                   <div className="min-w-0">
-                    <p className="text-base font-bold text-[#14211E] truncate">
-                      {c.nome}
-                      {!c.ativo && (
-                        <span className="ml-2 text-sm font-normal text-slate-500">(Inativo)</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-base font-bold text-[#14211E] truncate">
+                        {c.nome}
+                        {!c.ativo && (
+                          <span className="ml-2 text-sm font-normal text-slate-500">(Inativo)</span>
+                        )}
+                      </p>
+                      {estaPertoDoLimite(c.saldoDevedor, c.limiteCredito) && (
+                        <span className="inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                          Perto do limite
+                        </span>
                       )}
-                    </p>
+                    </div>
                     <p className="text-sm text-slate-600 flex flex-wrap items-center gap-2">
                       <span>{formatWhatsAppDisplay(c.whatsapp)}</span>
                       <span aria-hidden="true">·</span>
