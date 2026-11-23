@@ -84,14 +84,14 @@ export const CobrancaPage: React.FC = () => {
       const res = await carregarDadosExemplo({ comercioId: comercio.id, uid: usuario.uid });
       if (res.adicionados > 0) {
         setMsgDemo(
-          `${res.adicionados} cliente(s) de exemplo adicionado(s), incluindo 3 com compras vencidas (5, 12 e 20 dias de atraso).`
+          `${res.adicionados} cliente(s) adicionado(s) na aplicação, incluindo 4 com pagamentos vencidos (5, 9, 12 e 20 dias de atraso).`
         );
       } else {
-        setMsgDemo('Todos os clientes de exemplo já estão cadastrados neste comércio.');
+        setMsgDemo('Todos os clientes de teste já estão cadastrados neste comércio.');
       }
     } catch (err) {
       setErroDemo(
-        err instanceof Error ? err.message : 'Não foi possível adicionar os clientes de exemplo.'
+        err instanceof Error ? err.message : 'Não foi possível adicionar os clientes.'
       );
     } finally {
       setCarregandoDemo(false);
@@ -101,11 +101,24 @@ export const CobrancaPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-[#E4E4DF] bg-white p-5 sm:p-6 space-y-4">
-        <div>
-          <h1 className="text-2xl font-bold text-[#14211E]">Cobrança manual</h1>
-          <p className="mt-1 text-base text-slate-600">
-            Clientes com compras vencidas. O envio pelo WhatsApp abre a conversa direta com o cliente, com mensagem cordial e sem expor dados a terceiros.
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-[#14211E]">Cobrança manual</h1>
+            <p className="mt-1 text-base text-slate-600">
+              Clientes com compras vencidas. O envio pelo WhatsApp abre a conversa direta com o cliente, com mensagem cordial e sem expor dados a terceiros.
+            </p>
+          </div>
+          {isDono && vencidosComAtraso.length > 0 && (
+            <button
+              type="button"
+              onClick={handleCarregarExemplo}
+              disabled={carregandoDemo}
+              className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-[#FAFAF8] px-4 py-2 text-sm font-semibold text-[#14211E] hover:bg-slate-100 disabled:opacity-50 shrink-0"
+            >
+              <Sparkles className="h-4 w-4 text-amber-600" />
+              <span>{carregandoDemo ? 'Adicionando...' : 'Inserir clientes com vencidos'}</span>
+            </button>
+          )}
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-[#ECECE7] pt-4">

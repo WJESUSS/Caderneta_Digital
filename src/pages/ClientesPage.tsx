@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, ChevronRight, Search, UserPlus } from 'lucide-react';
+import { AlertCircle, ChevronRight, Search, Sparkles, UserPlus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
   estaPertoDoLimite,
@@ -8,13 +8,41 @@ import {
   formatDateBR,
   formatWhatsAppDisplay,
 } from '../lib/businessRules';
+import { carregarDadosExemplo } from '../lib/firestoreService';
 
 type Filtro = 'todos' | 'devedores' | 'perto_limite' | 'vencidos' | 'quitados';
 
 export const ClientesPage: React.FC = () => {
-  const { clientes } = useAuth();
+  const { clientes, comercio, usuario } = useAuth();
+  const isDono = usuario?.perfil === 'dono';
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<Filtro>('todos');
+  const [gerando, setGerando] = useState(false);
+  const [msgGeracao, setMsgGeracao] = useState<string | null>(null);
+  const [erroGeracao, setErroGeracao] = useState<string | null>(null);
+
+  const handleGerarClientesTeste = async () => {
+    if (!comercio || !usuario || !isDono) return;
+    setMsgGeracao(null);
+    setErroGeracao(null);
+    setGerando(true);
+    try {
+      const res = await carregarDadosExemplo({ comercioId: comercio.id, uid: usuario.uid });
+      if (res.adicionados > 0) {
+        setMsgGeracao(
+          `${res.adicionados} cliente(s) adicionado(s) na caderneta, incluindo contas com pagamentos vencidos e perto do limite.`
+        );
+      } else {
+        setMsgGeracao('Todos os clientes de teste já estão cadastrados neste comércio.');
+      }
+    } catch (err) {
+      setErroGeracao(
+        err instanceof Error ? err.message : 'Não foi possível adicionar os clientes na caderneta.'
+      );
+    } finally {
+      setGerando(false);
+    }
+  };
 
   const lista = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -42,14 +70,38 @@ export const ClientesPage: React.FC = () => {
     <div className="space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-[#14211E]">Clientes</h1>
-        <Link
-          to="/clientes/novo"
-          className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
-        >
-          <UserPlus className="h-5 w-5" />
-          <span>Cadastrar cliente</span>
-        </Link>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {isDono && (
+            <button
+              type="button"
+              onClick={handleGerarClientesTeste}
+              disabled={gerando}
+              className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-white px-4 py-3 text-base font-semibold text-[#14211E] hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Sparkles className="h-5 w-5 text-amber-600" />
+              <span>{gerando ? 'Adicionando...' : 'Inserir clientes com vencidos'}</span>
+            </button>
+          )}
+          <Link
+            to="/clientes/novo"
+            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
+          >
+            <UserPlus className="h-5 w-5" />
+            <span>Cadastrar cliente</span>
+          </Link>
+        </div>
       </div>
+
+      {msgGeracao && (
+        <p className="rounded-xl bg-teal-50 px-4 py-3 text-sm font-medium text-teal-900">
+          {msgGeracao}
+        </p>
+      )}
+      {erroGeracao && (
+        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+          {erroGeracao}
+        </p>
+      )}
 
       <div className="rounded-2xl border border-[#E4E4DF] bg-white p-4 sm:p-6 space-y-4">
         <div className="flex flex-col md:flex-row gap-3 md:items-center justify-between">

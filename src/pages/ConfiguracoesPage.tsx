@@ -436,16 +436,16 @@ export const ConfiguracoesPage: React.FC = () => {
                     });
                     if (res.adicionados > 0) {
                       setMsgDemo(
-                        `${res.adicionados} cliente(s) de exemplo adicionado(s), incluindo compras vencidas e perto do limite.`
+                        `${res.adicionados} cliente(s) adicionado(s), incluindo 4 com pagamentos vencidos e contas perto do limite.`
                       );
                     } else {
-                      setMsgDemo('Todos os clientes de exemplo já foram adicionados neste comércio.');
+                      setMsgDemo('Todos os clientes de teste já foram adicionados neste comércio.');
                     }
                   } catch (err) {
                     setErroDemo(
                       err instanceof Error
                         ? err.message
-                        : 'Não foi possível adicionar os clientes de exemplo.'
+                        : 'Não foi possível adicionar os clientes.'
                     );
                   } finally {
                     setCarregandoDemo(false);
@@ -457,7 +457,7 @@ export const ConfiguracoesPage: React.FC = () => {
                 <span>
                   {carregandoDemo
                     ? 'Gerando...'
-                    : 'Adicionar clientes de exemplo (com vencidos)'}
+                    : 'Inserir clientes com pagamentos vencidos'}
                 </span>
               </button>
 
