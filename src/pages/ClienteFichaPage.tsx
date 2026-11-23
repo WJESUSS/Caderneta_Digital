@@ -17,6 +17,7 @@ import {
   formatCentavos,
   formatDateBR,
   formatWhatsAppDisplay,
+  obterNumeroLancamentoExibicao,
   parseBRLToCentavos,
   type Lancamento,
   type LinkConsulta,
@@ -31,6 +32,7 @@ import {
 } from '../lib/firestoreService';
 import { APP_PUBLIC_URL } from '../lib/qrUrl';
 import { QRCodeCard } from '../components/QRCodeCard';
+import { ComprovanteCard, type ComprovanteDados } from '../components/ComprovanteCard';
 
 const LOCAL_TOKEN_PREFIX = 'caderneta_link_token_';
 
@@ -54,6 +56,7 @@ export const ClienteFichaPage: React.FC = () => {
   const [justificativa, setJustificativa] = useState('');
   const [estornando, setEstornando] = useState(false);
   const [erroEstorno, setErroEstorno] = useState<string | null>(null);
+  const [estornoComprovante, setEstornoComprovante] = useState<ComprovanteDados | null>(null);
 
   // Modal de ajuste de limite (só Dono)
   const [limiteModalOpen, setLimiteModalOpen] = useState(false);
@@ -175,17 +178,45 @@ export const ClienteFichaPage: React.FC = () => {
     if (!comercio || !usuario || !estornoAlvo) return;
     setErroEstorno(null);
     setEstornando(true);
+    const alvo = estornoAlvo;
+    const motivoLimpo = justificativa.trim();
     try {
-      await estornarLancamento({
+      const res = await estornarLancamento({
         comercioId: comercio.id,
-        comercioNome: comercio.nome,
+        comercioNome: comercio.nome.trim(),
         clienteId: cliente.id,
-        lancamentoAlvo: estornoAlvo,
-        justificativa,
+        lancamentoAlvo: alvo,
+        justificativa: motivoLimpo,
         uid: usuario.uid,
       });
+      const formaLabel =
+        alvo.forma === 'pix_manual'
+          ? 'Pix manual'
+          : alvo.forma === 'debito'
+          ? 'Débito'
+          : alvo.forma === 'dinheiro'
+          ? 'Dinheiro'
+          : 'Fiado';
       setEstornoAlvo(null);
       setJustificativa('');
+      setEstornoComprovante({
+        tipo: 'estorno',
+        comercioNome: comercio.nome.trim(),
+        clienteNome: cliente.nome,
+        clienteWhatsapp: cliente.whatsapp,
+        saldoAnterior: res.saldoAnterior,
+        valor: alvo.valor,
+        novoSaldo: res.novoSaldo,
+        limiteCredito: res.limiteCredito,
+        forma: alvo.forma,
+        formaLabel,
+        justificativa: motivoLimpo,
+        dataHora: new Date(),
+        lancamentoId: res.lancamentoId,
+        numero: res.numero,
+        registradoPorNome: usuario.nome,
+        offline: false,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro ao estornar lançamento.';
       setErroEstorno(
@@ -236,6 +267,23 @@ export const ClienteFichaPage: React.FC = () => {
       setSalvandoLimite(false);
     }
   };
+
+  if (estornoComprovante) {
+    return (
+      <ComprovanteCard
+        dados={estornoComprovante}
+        acoesExtras={
+          <button
+            type="button"
+            onClick={() => setEstornoComprovante(null)}
+            className="flex min-h-[48px] w-full items-center justify-center rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
+          >
+            Voltar à ficha do cliente
+          </button>
+        }
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -447,6 +495,9 @@ export const ClienteFichaPage: React.FC = () => {
                           foiEstornado ? 'line-through text-slate-400' : 'text-[#14211E]'
                         }`}
                       >
+                        <span className="font-mono-nums text-xs font-semibold text-slate-500 mr-2">
+                          {obterNumeroLancamentoExibicao(l.numero, l.id)}
+                        </span>
                         {l.tipo === 'compra'
                           ? 'Compra fiado'
                           : l.tipo === 'pagamento'

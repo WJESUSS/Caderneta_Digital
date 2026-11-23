@@ -4,7 +4,10 @@ import {
   calcularDiasAtraso,
   calcularVencimentoCompra,
   estaPertoDoLimite,
+  formatarNomePropio,
+  formatarNumeroLancamento,
   isCompraVencida,
+  obterNumeroLancamentoExibicao,
   percentualLimiteUsado,
   recalcularCarteiraCliente,
   validarCompra,
@@ -254,5 +257,29 @@ describe('Tarefa 4 - Cálculo de dias de atraso', () => {
     expect(calcularDiasAtraso('2026-05-10', '2026-05-17')).toBe(7);
     expect(calcularDiasAtraso('2026-05-10', '2026-05-26')).toBe(16);
     expect(calcularDiasAtraso('', '2026-05-26')).toBe(0);
+  });
+});
+
+describe('Recibo e comprovante - Número curto e formatação de nome próprio', () => {
+  it('gera números curtos #CMP-XXXX, #PAG-XXXX e #EST-XXXX com 4 dígitos', () => {
+    expect(formatarNumeroLancamento('compra', 1)).toBe('#CMP-0001');
+    expect(formatarNumeroLancamento('pagamento', 12)).toBe('#PAG-0012');
+    expect(formatarNumeroLancamento('estorno', 1045)).toBe('#EST-1045');
+    expect(formatarNumeroLancamento('pagamento', 12345)).toBe('#PAG-12345');
+  });
+
+  it('usa o campo numero quando presente e faz fallback com os 6 últimos caracteres do ID', () => {
+    expect(obterNumeroLancamentoExibicao('#PAG-0012', 'lnc_1795456211240_c1d0e22e43b9f34e')).toBe('#PAG-0012');
+    expect(obterNumeroLancamentoExibicao('CMP-0005', 'lnc_123')).toBe('#CMP-0005');
+    expect(obterNumeroLancamentoExibicao(undefined, 'lnc_1795456211240_c1d0e22e43b9f34e')).toBe('#B9F34E');
+    expect(obterNumeroLancamentoExibicao('', 'pag_abc123')).toBe('#ABC123');
+  });
+
+  it('formata nome próprio preservando preposições de, da, do, das, dos e e em minúscula', () => {
+    expect(formatarNomePropio('WASHINGTON JESUS DOS SANTOS')).toBe('Washington Jesus dos Santos');
+    expect(formatarNomePropio('  maria   da   silva  e  souza ')).toBe('Maria da Silva e Souza');
+    expect(formatarNomePropio('joão DE oliveira')).toBe('João de Oliveira');
+    expect(formatarNomePropio('ANA DAS DORES DO CARMO')).toBe('Ana das Dores do Carmo');
+    expect(formatarNomePropio('   ')).toBe('');
   });
 });

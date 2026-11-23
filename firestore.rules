@@ -49,7 +49,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'nome', 'limitePadrao', 'pinHash', 'pinSalt',
           'pinTentativasErradas', 'pinBloqueadoAte', 'donoUid', 'criadoEm',
-          'pixChave', 'pixRecebedor', 'whatsappContato'
+          'pixChave', 'pixRecebedor', 'whatsappContato', 'ultimoNumeroLancamento'
         ])
         && data.nome is string && data.nome.size() >= 2 && data.nome.size() <= 80
         && data.limitePadrao is int && data.limitePadrao >= 0 && data.limitePadrao <= 100000000
@@ -61,7 +61,8 @@ service cloud.firestore {
         && data.criadoEm is timestamp
         && (!('pixChave' in data) || (data.pixChave is string && data.pixChave.size() <= 140))
         && (!('pixRecebedor' in data) || (data.pixRecebedor is string && data.pixRecebedor.size() <= 60))
-        && (!('whatsappContato' in data) || (data.whatsappContato is string && data.whatsappContato.size() <= 20 && (data.whatsappContato == '' || data.whatsappContato.matches('^\\+55\\d{10,11}$'))));
+        && (!('whatsappContato' in data) || (data.whatsappContato is string && data.whatsappContato.size() <= 20 && (data.whatsappContato == '' || data.whatsappContato.matches('^\\+55\\d{10,11}$'))))
+        && (!('ultimoNumeroLancamento' in data) || (data.ultimoNumeroLancamento is int && data.ultimoNumeroLancamento >= 0 && data.ultimoNumeroLancamento <= 100000000));
     }
 
     function isValidUsuario(data) {
@@ -118,7 +119,8 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'comercioId', 'clienteId', 'tipo', 'valor', 'forma', 'itens',
           'vencimento', 'valorEmAberto', 'autorizadoExcecaoPor',
-          'estornoDe', 'justificativa', 'idempotencyKey', 'criadoPor', 'criadoEm'
+          'estornoDe', 'justificativa', 'idempotencyKey', 'criadoPor', 'criadoEm',
+          'numero'
         ])
         && isValidId(data.comercioId)
         && isValidId(data.clienteId)
@@ -134,6 +136,7 @@ service cloud.firestore {
         && data.idempotencyKey is string && data.idempotencyKey.size() >= 8 && data.idempotencyKey.size() <= 80
         && isValidId(data.criadoPor)
         && data.criadoEm is timestamp
+        && (!('numero' in data) || (data.numero is string && data.numero.size() >= 5 && data.numero.size() <= 24 && data.numero.matches('^#?(CMP|PAG|EST)-\\d{4,10}$')))
         && (data.tipo != 'estorno' || (isValidId(data.estornoDe) && data.justificativa.size() >= 3));
     }
 
@@ -224,6 +227,22 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'pinTentativasErradas', 'pinBloqueadoAte'
             ]))
+          || (isMembroComercio(comercioId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'ultimoNumeroLancamento'
+            ])
+            && (
+              (!('ultimoNumeroLancamento' in existing()) && incoming().ultimoNumeroLancamento == 1)
+              || ('ultimoNumeroLancamento' in existing() && incoming().ultimoNumeroLancamento == existing().ultimoNumeroLancamento + 1)
+            ))
+          || (isDono(comercioId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'ultimoNumeroLancamento'
+            ])
+            && (
+              (!('ultimoNumeroLancamento' in existing()) && incoming().ultimoNumeroLancamento >= 1)
+              || ('ultimoNumeroLancamento' in existing() && incoming().ultimoNumeroLancamento >= existing().ultimoNumeroLancamento + 1)
+            ))
         );
       allow delete: if false;
     }

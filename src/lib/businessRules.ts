@@ -15,6 +15,7 @@ export interface Comercio {
   pixChave?: string;
   pixRecebedor?: string;
   whatsappContato?: string;
+  ultimoNumeroLancamento?: number;
 }
 
 export interface Usuario {
@@ -50,6 +51,7 @@ export interface Cliente {
 
 export interface Lancamento {
   id: string;
+  numero?: string;
   comercioId: string;
   clienteId: string;
   tipo: TipoLancamento;
@@ -80,6 +82,7 @@ export interface LinkConsulta {
 
 export interface LancamentoResumoPublico {
   id: string;
+  numero?: string;
   tipo: TipoLancamento;
   valor: number;
   forma: FormaPagamento;
@@ -493,4 +496,50 @@ export function calcularDiasAtraso(
   const hojeMs = Date.UTC(hy, hm - 1, hd);
   const diff = Math.floor((hojeMs - vencMs) / 86_400_000);
   return Math.max(0, diff);
+}
+
+/**
+ * Formata o número sequencial curto do lançamento:
+ * #CMP-0012, #PAG-0012 ou #EST-0012.
+ */
+export function formatarNumeroLancamento(tipo: TipoLancamento, sequencia: number): string {
+  const prefixo = tipo === 'compra' ? 'CMP' : tipo === 'pagamento' ? 'PAG' : 'EST';
+  const safeSeq = Math.max(1, Math.round(sequencia));
+  return `#${prefixo}-${String(safeSeq).padStart(4, '0')}`;
+}
+
+/**
+ * Retorna o número curto para exibição (#PAG-0012) ou fallback com os
+ * 6 últimos caracteres do ID em maiúsculas (#B9F34E) para lançamentos antigos.
+ */
+export function obterNumeroLancamentoExibicao(
+  numero: string | undefined,
+  lancamentoId: string
+): string {
+  const limpo = (numero ?? '').trim();
+  if (limpo) {
+    return limpo.startsWith('#') ? limpo : `#${limpo}`;
+  }
+  const suffix = lancamentoId.replace(/^#/, '').slice(-6).toUpperCase();
+  return suffix ? `#${suffix}` : '#------';
+}
+
+const PREPOSICOES_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+
+/**
+ * Formata nome próprio em português (Title Case mantendo preposições em minúscula).
+ */
+export function formatarNomePropio(nome: string): string {
+  const limpo = nome.trim();
+  if (!limpo) return '';
+  return limpo
+    .split(/\s+/)
+    .map((palavra, idx) => {
+      const lower = palavra.toLocaleLowerCase('pt-BR');
+      if (idx > 0 && PREPOSICOES_NOME.has(lower)) {
+        return lower;
+      }
+      return lower.charAt(0).toLocaleUpperCase('pt-BR') + lower.slice(1);
+    })
+    .join(' ');
 }

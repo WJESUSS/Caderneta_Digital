@@ -59,6 +59,10 @@
           "type": "string",
           "maxLength": 20,
           "description": "WhatsApp opcional do comércio para receber avisos de pagamento via Pix."
+        },
+        "ultimoNumeroLancamento": {
+          "type": "integer",
+          "description": "Contador sequencial por comércio para gerar o número curto do lançamento (#CMP-0001, #PAG-0002, #EST-0003)."
         }
       },
       "required": [
@@ -257,6 +261,13 @@
         "criadoEm": {
           "type": "string",
           "format": "date-time"
+        },
+        "numero": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 24,
+          "pattern": "^#?(CMP|PAG|EST)-\\d{4,10}$",
+          "description": "Número sequencial legível do lançamento (#CMP-0012, #PAG-0012, #EST-0012)."
         }
       },
       "required": [

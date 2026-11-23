@@ -85,4 +85,11 @@ describe('Firestore Rules Static Security Assertions (Dirty Dozen)', () => {
     expect(atendenteClienteMatch?.[1]).not.toContain('limiteCredito');
     expect(atendenteClienteMatch?.[1]).not.toContain('observacaoDono');
   });
+
+  it('14. Allows membro do comercio to increment ultimoNumeroLancamento and saves numero on lancamentos', () => {
+    expect(rules).toContain("'ultimoNumeroLancamento'");
+    expect(rules).toContain("incoming().ultimoNumeroLancamento == existing().ultimoNumeroLancamento + 1");
+    expect(rules).toContain("'numero'");
+    expect(rules).toContain("data.numero.matches('^#?(CMP|PAG|EST)-\\\\d{4,10}$')");
+  });
 });

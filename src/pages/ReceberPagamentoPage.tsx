@@ -94,13 +94,14 @@ export const ReceberPagamentoPage: React.FC = () => {
         refreshOfflineQueueCount();
         setConcluido({
           tipo: 'pagamento',
-          comercioNome: comercio.nome,
+          comercioNome: comercio.nome.trim(),
           clienteNome: clienteSelecionado.nome,
           clienteWhatsapp: clienteSelecionado.whatsapp,
           saldoAnterior: clienteSelecionado.saldoDevedor,
           valor: valorCentavos,
           novoSaldo: check.novoSaldo,
           limiteCredito: clienteSelecionado.limiteCredito,
+          forma,
           formaLabel: labelForma(forma),
           dataHora: agora,
           lancamentoId: idempotencyKey,
@@ -112,7 +113,7 @@ export const ReceberPagamentoPage: React.FC = () => {
 
       const res = await registrarPagamento({
         comercioId: comercio.id,
-        comercioNome: comercio.nome,
+        comercioNome: comercio.nome.trim(),
         clienteId: clienteSelecionado.id,
         valorCentavos,
         forma,
@@ -122,16 +123,18 @@ export const ReceberPagamentoPage: React.FC = () => {
 
       setConcluido({
         tipo: 'pagamento',
-        comercioNome: comercio.nome,
+        comercioNome: comercio.nome.trim(),
         clienteNome: clienteSelecionado.nome,
         clienteWhatsapp: clienteSelecionado.whatsapp,
         saldoAnterior: res.saldoAnterior,
         valor: valorCentavos,
         novoSaldo: res.novoSaldo,
         limiteCredito: res.limiteCredito,
+        forma,
         formaLabel: labelForma(forma),
         dataHora: agora,
         lancamentoId: res.lancamentoId,
+        numero: res.numero,
         registradoPorNome: usuario.nome,
         offline: false,
       });

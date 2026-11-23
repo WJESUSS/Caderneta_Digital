@@ -95,13 +95,14 @@ export const NovaCompraPage: React.FC = () => {
         refreshOfflineQueueCount();
         setConcluido({
           tipo: 'compra',
-          comercioNome: comercio.nome,
+          comercioNome: comercio.nome.trim(),
           clienteNome: clienteSelecionado.nome,
           clienteWhatsapp: clienteSelecionado.whatsapp,
           saldoAnterior: clienteSelecionado.saldoDevedor,
           valor: valorCentavos,
           novoSaldo: clienteSelecionado.saldoDevedor + valorCentavos,
           limiteCredito: clienteSelecionado.limiteCredito,
+          forma: 'fiado',
           formaLabel: 'Fiado',
           itens: itensLimpos || undefined,
           dataHora: agora,
@@ -114,7 +115,7 @@ export const NovaCompraPage: React.FC = () => {
 
       const res = await registrarCompra({
         comercioId: comercio.id,
-        comercioNome: comercio.nome,
+        comercioNome: comercio.nome.trim(),
         clienteId: clienteSelecionado.id,
         valorCentavos,
         itens: itensLimpos,
@@ -125,17 +126,19 @@ export const NovaCompraPage: React.FC = () => {
 
       setConcluido({
         tipo: 'compra',
-        comercioNome: comercio.nome,
+        comercioNome: comercio.nome.trim(),
         clienteNome: clienteSelecionado.nome,
         clienteWhatsapp: clienteSelecionado.whatsapp,
         saldoAnterior: res.saldoAnterior,
         valor: valorCentavos,
         novoSaldo: res.novoSaldo,
         limiteCredito: res.limiteCredito,
+        forma: 'fiado',
         formaLabel: 'Fiado',
         itens: itensLimpos || undefined,
         dataHora: agora,
         lancamentoId: res.lancamentoId,
+        numero: res.numero,
         registradoPorNome: usuario.nome,
         offline: false,
       });
@@ -157,13 +160,14 @@ export const NovaCompraPage: React.FC = () => {
         refreshOfflineQueueCount();
         setConcluido({
           tipo: 'compra',
-          comercioNome: comercio.nome,
+          comercioNome: comercio.nome.trim(),
           clienteNome: clienteSelecionado.nome,
           clienteWhatsapp: clienteSelecionado.whatsapp,
           saldoAnterior: clienteSelecionado.saldoDevedor,
           valor: valorCentavos,
           novoSaldo: clienteSelecionado.saldoDevedor + valorCentavos,
           limiteCredito: clienteSelecionado.limiteCredito,
+          forma: 'fiado',
           formaLabel: 'Fiado',
           itens: itensLimpos || undefined,
           dataHora: agora,

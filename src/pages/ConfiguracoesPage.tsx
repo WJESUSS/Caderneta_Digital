@@ -72,6 +72,11 @@ export const ConfiguracoesPage: React.FC = () => {
     e.preventDefault();
     setMsgConfig(null);
     setErroConfig(null);
+    const nomeLimpo = nomeComercio.trim();
+    if (!nomeLimpo || nomeLimpo.length < 3) {
+      setErroConfig('Informe o nome do comércio com pelo menos 3 caracteres.');
+      return;
+    }
     if (novoPin && !/^\d{4}$/.test(novoPin)) {
       setErroConfig('O PIN deve conter exatamente 4 dígitos numéricos.');
       return;
@@ -87,14 +92,15 @@ export const ConfiguracoesPage: React.FC = () => {
     try {
       await salvarConfigComercio({
         comercioId: comercio.id,
-        nome: nomeComercio,
+        nome: nomeLimpo,
         limitePadraoCentavos: parseBRLToCentavos(limiteStr),
         novoPin4: novoPin || undefined,
         pixChave: pixChave.trim(),
-        pixRecebedor: pixRecebedor.trim() || nomeComercio.trim(),
+        pixRecebedor: pixRecebedor.trim() || nomeLimpo,
         whatsappContato: whatsappContato.trim(),
         uid: usuario.uid,
       });
+      setNomeComercio(nomeLimpo);
       setNovoPin('');
       setMsgConfig('Configurações salvas com sucesso.');
     } catch (err) {
@@ -185,6 +191,8 @@ export const ConfiguracoesPage: React.FC = () => {
                 id="cfg-nome"
                 type="text"
                 required
+                minLength={3}
+                maxLength={80}
                 value={nomeComercio}
                 onChange={(e) => setNomeComercio(e.target.value)}
                 className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 text-base text-[#14211E] focus:border-teal-700 focus:outline-none"

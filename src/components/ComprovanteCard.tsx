@@ -1,9 +1,15 @@
 import React, { useState } from 'react';
 import { Check, CheckCircle2, Copy, MessageCircle, Printer } from 'lucide-react';
-import { buildWhatsAppUrl, formatCentavos } from '../lib/businessRules';
+import {
+  buildWhatsAppUrl,
+  formatarNomePropio,
+  formatCentavos,
+  obterNumeroLancamentoExibicao,
+  type FormaPagamento,
+} from '../lib/businessRules';
 
 export interface ComprovanteDados {
-  tipo: 'compra' | 'pagamento';
+  tipo: 'compra' | 'pagamento' | 'estorno';
   comercioNome: string;
   clienteNome: string;
   clienteWhatsapp: string;
@@ -11,10 +17,13 @@ export interface ComprovanteDados {
   valor: number;
   novoSaldo: number;
   limiteCredito: number;
+  forma?: FormaPagamento;
   formaLabel: string;
   itens?: string;
+  justificativa?: string;
   dataHora: Date;
   lancamentoId: string;
+  numero?: string;
   registradoPorNome: string;
   offline: boolean;
 }
@@ -27,7 +36,13 @@ interface ComprovanteCardProps {
 export const ComprovanteCard: React.FC<ComprovanteCardProps> = ({ dados, acoesExtras }) => {
   const [copiado, setCopiado] = useState(false);
 
+  const comercioNomeLimpo = dados.comercioNome.trim() || 'Comércio';
   const limiteDisponivel = Math.max(0, dados.limiteCredito - dados.novoSaldo);
+  const numeroExibicao = obterNumeroLancamentoExibicao(dados.numero, dados.lancamentoId);
+  const registradoPorFormatado = formatarNomePropio(dados.registradoPorNome) || 'Comércio';
+  const isPixManual =
+    dados.forma === 'pix_manual' || dados.formaLabel.toLowerCase().includes('pix');
+
   const dataHoraFormatada = dados.dataHora.toLocaleString('pt-BR', {
     timeZone: 'America/Bahia',
     dateStyle: 'short',
@@ -39,45 +54,87 @@ export const ComprovanteCard: React.FC<ComprovanteCardProps> = ({ dados, acoesEx
       ? dados.offline
         ? 'Compra salva na fila offline'
         : 'Comprovante de Compra Fiado'
-      : dados.offline
-      ? 'Pagamento salvo na fila offline'
-      : 'Recibo de Pagamento';
+      : dados.tipo === 'pagamento'
+      ? dados.offline
+        ? 'Pagamento salvo na fila offline'
+        : 'Recibo de Pagamento'
+      : 'Comprovante de Estorno';
+
+  const cabecalhoTexto =
+    dados.tipo === 'compra'
+      ? 'COMPROVANTE DE COMPRA FIADO'
+      : dados.tipo === 'pagamento'
+      ? 'RECIBO DE PAGAMENTO'
+      : 'COMPROVANTE DE ESTORNO';
+
+  const rotuloValor =
+    dados.tipo === 'compra'
+      ? 'Valor da compra'
+      : dados.tipo === 'pagamento'
+      ? 'Valor pago'
+      : 'Valor estornado';
+
+  const situacaoLinha =
+    dados.tipo === 'pagamento'
+      ? dados.novoSaldo === 0
+        ? 'Conta quitada'
+        : `Saldo restante: ${formatCentavos(dados.novoSaldo)}`
+      : null;
 
   const textoComprovante = [
-    `*${dados.comercioNome}*`,
-    dados.tipo === 'compra' ? 'COMPROVANTE DE COMPRA FIADO' : 'RECIBO DE PAGAMENTO',
+    comercioNomeLimpo,
+    cabecalhoTexto,
     '--------------------------------',
     `Cliente: ${dados.clienteNome}`,
     `Data/hora: ${dataHoraFormatada}`,
-    `Lancamento: #${dados.lancamentoId}`,
-    `Registrado por: ${dados.registradoPorNome}`,
+    `Lançamento: ${numeroExibicao}`,
+    `Registrado por: ${registradoPorFormatado}`,
     `Forma: ${dados.formaLabel}`,
+    ...(isPixManual ? ['Pix conferido pelo comércio (sem confirmação do banco)'] : []),
     ...(dados.itens ? [`Itens: ${dados.itens}`] : []),
+    ...(dados.justificativa ? [`Motivo: ${dados.justificativa}`] : []),
     '--------------------------------',
     `Saldo anterior: ${formatCentavos(dados.saldoAnterior)}`,
-    `${dados.tipo === 'compra' ? 'Valor da compra' : 'Valor pago'}: ${formatCentavos(dados.valor)}`,
+    `${rotuloValor}: ${formatCentavos(dados.valor)}`,
     `Novo saldo: ${formatCentavos(dados.novoSaldo)}`,
-    `Limite disponivel: ${formatCentavos(limiteDisponivel)}`,
-    ...(dados.offline ? ['', '(Salvo offline — sera sincronizado ao reconectar)'] : []),
+    `Limite disponível: ${formatCentavos(limiteDisponivel)}`,
+    ...(situacaoLinha ? [situacaoLinha] : []),
+    ...(dados.offline ? ['', '(Salvo offline — será sincronizado ao reconectar)'] : []),
   ].join('\n');
 
   const primeiroNome = dados.clienteNome.trim().split(/\s+/)[0] || dados.clienteNome;
   const msgWhats =
     dados.tipo === 'compra'
-      ? `Olá, ${primeiroNome}! Segue o comprovante da sua compra em ${dados.comercioNome}:\n• Compra #${dados.lancamentoId}: ${formatCentavos(
+      ? `Olá, ${primeiroNome}! Segue o comprovante da sua compra em ${comercioNomeLimpo}:\n• Lançamento: ${numeroExibicao}\n• Valor da compra: ${formatCentavos(
           dados.valor
-        )}\n• Saldo anterior: ${formatCentavos(dados.saldoAnterior)}\n• Novo saldo: ${formatCentavos(
+        )}${dados.itens ? `\n• Itens: ${dados.itens}` : ''}\n• Saldo anterior: ${formatCentavos(
+          dados.saldoAnterior
+        )}\n• Novo saldo: ${formatCentavos(
           dados.novoSaldo
-        )}\n• Limite disponível: ${formatCentavos(limiteDisponivel)}\n• Data/hora: ${dataHoraFormatada}\n• Atendido por: ${
-          dados.registradoPorNome
-        }`
-      : `Olá, ${primeiroNome}! Segue o recibo do seu pagamento em ${dados.comercioNome}:\n• Recibo #${dados.lancamentoId}: ${formatCentavos(
-          dados.valor
-        )} (${dados.formaLabel})\n• Saldo anterior: ${formatCentavos(dados.saldoAnterior)}\n• Novo saldo: ${formatCentavos(
+        )}\n• Limite disponível: ${formatCentavos(limiteDisponivel)}\n• Data/hora: ${dataHoraFormatada}\n• Registrado por: ${registradoPorFormatado}`
+      : dados.tipo === 'pagamento'
+      ? `Olá, ${primeiroNome}! Segue o recibo do seu pagamento em ${comercioNomeLimpo}:\n• Lançamento: ${numeroExibicao}\n• Forma: ${
+          dados.formaLabel
+        }${
+          isPixManual ? '\n• Pix conferido pelo comércio (sem confirmação do banco)' : ''
+        }\n• Saldo anterior: ${formatCentavos(
+          dados.saldoAnterior
+        )}\n• Valor pago: ${formatCentavos(dados.valor)}\n• Novo saldo: ${formatCentavos(
           dados.novoSaldo
-        )}${dados.novoSaldo === 0 ? ' (Conta quitada!)' : ''}\n• Limite disponível: ${formatCentavos(
+        )}\n• Limite disponível: ${formatCentavos(
           limiteDisponivel
-        )}\n• Data/hora: ${dataHoraFormatada}\n• Registrado por: ${dados.registradoPorNome}`;
+        )}\n• ${situacaoLinha}\n• Data/hora: ${dataHoraFormatada}\n• Registrado por: ${registradoPorFormatado}`
+      : `Olá, ${primeiroNome}! Segue o comprovante de estorno em ${comercioNomeLimpo}:\n• Lançamento: ${numeroExibicao}\n• Valor estornado: ${formatCentavos(
+          dados.valor
+        )}${
+          dados.justificativa ? `\n• Motivo: ${dados.justificativa}` : ''
+        }\n• Saldo anterior: ${formatCentavos(
+          dados.saldoAnterior
+        )}\n• Novo saldo: ${formatCentavos(
+          dados.novoSaldo
+        )}\n• Limite disponível: ${formatCentavos(
+          limiteDisponivel
+        )}\n• Data/hora: ${dataHoraFormatada}\n• Registrado por: ${registradoPorFormatado}`;
 
   const handleCopiar = async () => {
     try {
@@ -96,8 +153,8 @@ export const ComprovanteCard: React.FC<ComprovanteCardProps> = ({ dados, acoesEx
           <div className="no-print mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-50 text-teal-700">
             <CheckCircle2 className="h-7 w-7" />
           </div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-            {dados.comercioNome}
+          <p className="text-sm font-semibold tracking-wide text-slate-600">
+            {comercioNomeLimpo}
           </p>
           <h1 className="mt-1 text-xl font-bold text-[#14211E]">{titulo}</h1>
           {dados.offline && (
@@ -113,27 +170,40 @@ export const ComprovanteCard: React.FC<ComprovanteCardProps> = ({ dados, acoesEx
             <dd className="font-semibold text-[#14211E] text-right">{dados.clienteNome}</dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-slate-600">Data e hora</dt>
+            <dt className="text-slate-600">Data/hora</dt>
             <dd className="font-mono-nums text-[#14211E] text-right">{dataHoraFormatada}</dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-slate-600">Nº do lançamento</dt>
-            <dd className="font-mono-nums text-xs sm:text-sm text-slate-700 text-right break-all">
-              {dados.lancamentoId}
+            <dt className="text-slate-600">Lançamento</dt>
+            <dd className="font-mono-nums text-sm font-bold text-[#14211E] text-right">
+              {numeroExibicao}
             </dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-slate-600">Registrado por</dt>
-            <dd className="text-[#14211E] text-right">{dados.registradoPorNome}</dd>
+            <dd className="text-[#14211E] text-right">{registradoPorFormatado}</dd>
           </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-slate-600">Forma</dt>
-            <dd className="font-medium text-[#14211E] text-right">{dados.formaLabel}</dd>
+          <div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-600">Forma</dt>
+              <dd className="font-medium text-[#14211E] text-right">{dados.formaLabel}</dd>
+            </div>
+            {isPixManual && (
+              <p className="mt-0.5 text-xs text-slate-500 text-right">
+                Pix conferido pelo comércio (sem confirmação do banco)
+              </p>
+            )}
           </div>
           {dados.itens && (
             <div className="flex justify-between gap-4">
-              <dt className="text-slate-600">Descrição</dt>
+              <dt className="text-slate-600">Itens</dt>
               <dd className="text-[#14211E] text-right max-w-[65%]">{dados.itens}</dd>
+            </div>
+          )}
+          {dados.justificativa && (
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-600">Motivo</dt>
+              <dd className="text-[#14211E] text-right max-w-[65%]">{dados.justificativa}</dd>
             </div>
           )}
 
@@ -143,15 +213,13 @@ export const ComprovanteCard: React.FC<ComprovanteCardProps> = ({ dados, acoesEx
               <dd className="font-mono-nums text-[#14211E]">{formatCentavos(dados.saldoAnterior)}</dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="font-semibold text-[#14211E]">
-                {dados.tipo === 'compra' ? 'Valor da compra' : 'Valor do pagamento'}
-              </dt>
+              <dt className="font-semibold text-[#14211E]">{rotuloValor}</dt>
               <dd
                 className={`font-mono-nums font-bold ${
                   dados.tipo === 'pagamento' ? 'text-teal-700' : 'text-[#14211E]'
                 }`}
               >
-                {dados.tipo === 'pagamento' ? '− ' : '+ '}
+                {dados.tipo === 'pagamento' ? '− ' : dados.tipo === 'compra' ? '+ ' : ''}
                 {formatCentavos(dados.valor)}
               </dd>
             </div>
@@ -167,6 +235,17 @@ export const ComprovanteCard: React.FC<ComprovanteCardProps> = ({ dados, acoesEx
                 {formatCentavos(limiteDisponivel)}
               </dd>
             </div>
+            {situacaoLinha && (
+              <div className="pt-1 text-sm font-bold text-right">
+                <span
+                  className={
+                    dados.novoSaldo === 0 ? 'text-teal-800' : 'text-[#14211E]'
+                  }
+                >
+                  {situacaoLinha}
+                </span>
+              </div>
+            )}
           </div>
         </dl>
       </div>

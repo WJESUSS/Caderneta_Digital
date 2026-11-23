@@ -21,6 +21,7 @@ import {
 import { createSecondaryAuthApp, db, handleFirestoreError, OperationType } from './firebase';
 import {
   calcularVencimentoCompra,
+  formatarNumeroLancamento,
   formatCentavos,
   getBahiaDateString,
   normalizeWhatsAppBR,
@@ -107,6 +108,7 @@ export async function criarComercioEDono(params: {
     pixChave: '',
     pixRecebedor: params.nomeComercio.trim().slice(0, 60),
     whatsappContato: '',
+    ultimoNumeroLancamento: 0,
     criadoEm: serverTimestamp(),
   });
 
@@ -163,6 +165,7 @@ export function observarComercio(
         pixChave: String(d.pixChave ?? ''),
         pixRecebedor: String(d.pixRecebedor ?? ''),
         whatsappContato: String(d.whatsappContato ?? ''),
+        ultimoNumeroLancamento: Number(d.ultimoNumeroLancamento ?? 0),
       });
     },
     (err) => {
@@ -235,6 +238,7 @@ export function observarLancamentosCliente(
           const d = docSnap.data();
           return {
             id: docSnap.id,
+            numero: d.numero ? String(d.numero) : undefined,
             comercioId: String(d.comercioId),
             clienteId: String(d.clienteId),
             tipo: d.tipo,
@@ -532,6 +536,7 @@ async function sincronizarConsultasPublicasCliente(params: {
   comprasAtualizadas: Map<string, number>;
   rawLancamentosDocs: Array<{
     id: string;
+    numero?: string;
     tipo: Lancamento['tipo'];
     valor: number;
     forma: FormaPagamento;
@@ -587,6 +592,7 @@ async function sincronizarConsultasPublicasCliente(params: {
       .slice(0, 30)
       .map((l) => ({
         id: l.id,
+        numero: l.numero,
         tipo: l.tipo,
         valor: l.valor,
         forma: l.forma,
@@ -626,6 +632,7 @@ async function fetchClientLancamentos(comercioId: string, clienteId: string) {
       return {
         ref: d.ref,
         id: d.id,
+        numero: data.numero ? String(data.numero) : undefined,
         tipo: data.tipo as Lancamento['tipo'],
         valor: Number(data.valor ?? 0),
         valorEmAberto: Number(data.valorEmAberto ?? 0),
@@ -648,7 +655,13 @@ export async function registrarCompra(params: {
   autorizadoExcecaoPor?: string;
   uid: string;
   idempotencyKey?: string;
-}): Promise<{ lancamentoId: string; saldoAnterior: number; novoSaldo: number; limiteCredito: number }> {
+}): Promise<{
+  lancamentoId: string;
+  numero?: string;
+  saldoAnterior: number;
+  novoSaldo: number;
+  limiteCredito: number;
+}> {
   const idem = params.idempotencyKey || generateIdempotencyKey('cmp');
 
   const existingLancamentos = await fetchClientLancamentos(params.comercioId, params.clienteId);
@@ -658,6 +671,7 @@ export async function registrarCompra(params: {
     const novoSaldoExist = Number(cliSnap.data()?.saldoDevedor ?? 0);
     return {
       lancamentoId: existingIdem.id,
+      numero: existingIdem.numero,
       saldoAnterior: Math.max(0, novoSaldoExist - existingIdem.valor),
       novoSaldo: novoSaldoExist,
       limiteCredito: Number(cliSnap.data()?.limiteCredito ?? 0),
@@ -675,16 +689,22 @@ export async function registrarCompra(params: {
   let clienteWhatsapp = '';
   let novoLancamentoCalc: LancamentoCalcInput | null = null;
   let vencimentoStr = '';
+  let numeroLancamento = '';
 
   try {
     await runTransaction(db, async (tx) => {
+      const comRef = doc(db, 'comercios', params.comercioId);
       const cliRef = doc(db, 'clientes', params.clienteId);
-      const cliSnap = await tx.get(cliRef);
+      const [comSnap, cliSnap] = await Promise.all([tx.get(comRef), tx.get(cliRef)]);
+      if (!comSnap.exists()) throw new Error('Comércio não encontrado.');
       if (!cliSnap.exists()) throw new Error('Cliente não encontrado.');
       const cli = cliSnap.data();
       if (!cli.ativo || cli.anonimizado) {
         throw new Error('Cliente inativo ou anonimizado.');
       }
+
+      const proximoNumero = Number(comSnap.data()?.ultimoNumeroLancamento ?? 0) + 1;
+      numeroLancamento = formatarNumeroLancamento('compra', proximoNumero);
 
       clienteNome = String(cli.nome);
       clienteWhatsapp = String(cli.whatsapp);
@@ -732,6 +752,7 @@ export async function registrarCompra(params: {
       tx.set(doc(db, 'lancamentos', lancamentoId), {
         comercioId: params.comercioId,
         clienteId: params.clienteId,
+        numero: numeroLancamento,
         tipo: 'compra',
         valor: params.valorCentavos,
         forma: 'fiado',
@@ -746,6 +767,12 @@ export async function registrarCompra(params: {
         criadoEm: serverTimestamp(),
       });
 
+      const comRefUpdate = doc(db, 'comercios', params.comercioId);
+      const numeroSeq = Number.parseInt(numeroLancamento.split('-')[1] || '1', 10);
+      tx.update(comRefUpdate, {
+        ultimoNumeroLancamento: numeroSeq,
+      });
+
       tx.update(cliRef, {
         saldoDevedor: novoCalc.saldoDevedor,
         valorVencido: novoCalc.valorVencido,
@@ -758,7 +785,7 @@ export async function registrarCompra(params: {
         comercioId: params.comercioId,
         quem: params.uid,
         acao: params.autorizadoExcecaoPor ? 'compra_excecao' : 'compra_registrada',
-        detalhes: `Compra de ${params.valorCentavos} centavos para ${clienteNome}.`,
+        detalhes: `Compra ${numeroLancamento} de ${params.valorCentavos} centavos para ${clienteNome}.`,
         quando: serverTimestamp(),
       });
     });
@@ -788,6 +815,7 @@ export async function registrarCompra(params: {
           ...existingLancamentos,
           {
             id: lancamentoId,
+            numero: numeroLancamento,
             tipo: 'compra',
             valor: params.valorCentavos,
             forma: 'fiado',
@@ -804,6 +832,7 @@ export async function registrarCompra(params: {
 
   return {
     lancamentoId,
+    numero: numeroLancamento,
     saldoAnterior,
     novoSaldo: resultadoCarteiraFinal.saldoDevedor,
     limiteCredito: limiteCreditoCliente,
@@ -818,7 +847,13 @@ export async function registrarPagamento(params: {
   forma: 'dinheiro' | 'pix_manual' | 'debito';
   uid: string;
   idempotencyKey?: string;
-}): Promise<{ lancamentoId: string; saldoAnterior: number; novoSaldo: number; limiteCredito: number }> {
+}): Promise<{
+  lancamentoId: string;
+  numero?: string;
+  saldoAnterior: number;
+  novoSaldo: number;
+  limiteCredito: number;
+}> {
   const idem = params.idempotencyKey || generateIdempotencyKey('pag');
 
   const existingLancamentos = await fetchClientLancamentos(params.comercioId, params.clienteId);
@@ -828,6 +863,7 @@ export async function registrarPagamento(params: {
     const novoSaldoExist = Number(cliSnap.data()?.saldoDevedor ?? 0);
     return {
       lancamentoId: existingIdem.id,
+      numero: existingIdem.numero,
       saldoAnterior: novoSaldoExist + existingIdem.valor,
       novoSaldo: novoSaldoExist,
       limiteCredito: Number(cliSnap.data()?.limiteCredito ?? 0),
@@ -843,16 +879,22 @@ export async function registrarPagamento(params: {
   let clienteNome = '';
   let clienteWhatsapp = '';
   let novoLancamentoCalc: LancamentoCalcInput | null = null;
+  let numeroLancamento = '';
 
   try {
     await runTransaction(db, async (tx) => {
+      const comRef = doc(db, 'comercios', params.comercioId);
       const cliRef = doc(db, 'clientes', params.clienteId);
-      const cliSnap = await tx.get(cliRef);
+      const [comSnap, cliSnap] = await Promise.all([tx.get(comRef), tx.get(cliRef)]);
+      if (!comSnap.exists()) throw new Error('Comércio não encontrado.');
       if (!cliSnap.exists()) throw new Error('Cliente não encontrado.');
       const cli = cliSnap.data();
       if (!cli.ativo || cli.anonimizado) {
         throw new Error('Cliente inativo ou anonimizado.');
       }
+
+      const proximoNumero = Number(comSnap.data()?.ultimoNumeroLancamento ?? 0) + 1;
+      numeroLancamento = formatarNumeroLancamento('pagamento', proximoNumero);
 
       clienteNome = String(cli.nome);
       clienteWhatsapp = String(cli.whatsapp);
@@ -889,6 +931,7 @@ export async function registrarPagamento(params: {
       tx.set(doc(db, 'lancamentos', lancamentoId), {
         comercioId: params.comercioId,
         clienteId: params.clienteId,
+        numero: numeroLancamento,
         tipo: 'pagamento',
         valor: params.valorCentavos,
         forma: params.forma,
@@ -901,6 +944,12 @@ export async function registrarPagamento(params: {
         idempotencyKey: idem,
         criadoPor: params.uid,
         criadoEm: serverTimestamp(),
+      });
+
+      const comRefUpdate = doc(db, 'comercios', params.comercioId);
+      const numeroSeq = Number.parseInt(numeroLancamento.split('-')[1] || '1', 10);
+      tx.update(comRefUpdate, {
+        ultimoNumeroLancamento: numeroSeq,
       });
 
       for (const l of existingLancamentos) {
@@ -924,7 +973,7 @@ export async function registrarPagamento(params: {
         comercioId: params.comercioId,
         quem: params.uid,
         acao: 'pagamento_registrado',
-        detalhes: `Pagamento (${params.forma}) de ${params.valorCentavos} centavos de ${clienteNome}.`,
+        detalhes: `Pagamento ${numeroLancamento} (${params.forma}) de ${params.valorCentavos} centavos de ${clienteNome}.`,
         quando: serverTimestamp(),
       });
     });
@@ -954,6 +1003,7 @@ export async function registrarPagamento(params: {
           ...existingLancamentos,
           {
             id: lancamentoId,
+            numero: numeroLancamento,
             tipo: 'pagamento',
             valor: params.valorCentavos,
             forma: params.forma,
@@ -970,6 +1020,7 @@ export async function registrarPagamento(params: {
 
   return {
     lancamentoId,
+    numero: numeroLancamento,
     saldoAnterior,
     novoSaldo: resultadoCarteiraFinal.saldoDevedor,
     limiteCredito: limiteCreditoCliente,
@@ -983,7 +1034,13 @@ export async function estornarLancamento(params: {
   lancamentoAlvo: Lancamento;
   justificativa: string;
   uid: string;
-}): Promise<void> {
+}): Promise<{
+  lancamentoId: string;
+  numero: string;
+  saldoAnterior: number;
+  novoSaldo: number;
+  limiteCredito: number;
+}> {
   const just = params.justificativa.trim();
   if (just.length < 3) {
     throw new Error('Informe uma justificativa com pelo menos 3 caracteres para o estorno.');
@@ -1002,8 +1059,11 @@ export async function estornarLancamento(params: {
   const hojeBahia = getBahiaDateString(agora);
 
   let resultadoCarteiraFinal!: ReturnType<typeof recalcularCarteiraCliente>;
+  let saldoAnterior = 0;
+  let limiteCreditoCliente = 0;
   let clienteNome = '';
   let clienteWhatsapp = '';
+  let numeroEstorno = '';
 
   const estornoCalc: LancamentoCalcInput = {
     id: estornoId,
@@ -1016,12 +1076,18 @@ export async function estornarLancamento(params: {
 
   try {
     await runTransaction(db, async (tx) => {
+      const comRef = doc(db, 'comercios', params.comercioId);
       const cliRef = doc(db, 'clientes', params.clienteId);
-      const cliSnap = await tx.get(cliRef);
+      const [comSnap, cliSnap] = await Promise.all([tx.get(comRef), tx.get(cliRef)]);
+      if (!comSnap.exists()) throw new Error('Comércio não encontrado.');
       if (!cliSnap.exists()) throw new Error('Cliente não encontrado.');
       const cli = cliSnap.data();
       clienteNome = String(cli.nome);
       clienteWhatsapp = String(cli.whatsapp);
+      limiteCreditoCliente = Number(cli.limiteCredito ?? 0);
+
+      const proximoNumero = Number(comSnap.data()?.ultimoNumeroLancamento ?? 0) + 1;
+      numeroEstorno = formatarNumeroLancamento('estorno', proximoNumero);
 
       const baseCalc: LancamentoCalcInput[] = existingLancamentos.map((l) => ({
         id: l.id,
@@ -1031,6 +1097,7 @@ export async function estornarLancamento(params: {
         estornoDe: l.estornoDe,
         criadoEmMs: l.criadoEmMs,
       }));
+      saldoAnterior = recalcularCarteiraCliente(baseCalc, hojeBahia).saldoDevedor;
 
       const novoCalc = recalcularCarteiraCliente([...baseCalc, estornoCalc], hojeBahia);
       resultadoCarteiraFinal = novoCalc;
@@ -1038,6 +1105,7 @@ export async function estornarLancamento(params: {
       tx.set(doc(db, 'lancamentos', estornoId), {
         comercioId: params.comercioId,
         clienteId: params.clienteId,
+        numero: numeroEstorno,
         tipo: 'estorno',
         valor: params.lancamentoAlvo.valor,
         forma: params.lancamentoAlvo.forma,
@@ -1050,6 +1118,10 @@ export async function estornarLancamento(params: {
         idempotencyKey: `est_${params.lancamentoAlvo.id}`,
         criadoPor: params.uid,
         criadoEm: serverTimestamp(),
+      });
+
+      tx.update(comRef, {
+        ultimoNumeroLancamento: proximoNumero,
       });
 
       for (const l of existingLancamentos) {
@@ -1073,7 +1145,7 @@ export async function estornarLancamento(params: {
         comercioId: params.comercioId,
         quem: params.uid,
         acao: 'lancamento_estornado',
-        detalhes: `Estorno de ${params.lancamentoAlvo.tipo} (${params.lancamentoAlvo.valor}c) — Motivo: ${just.slice(0, 120)}`,
+        detalhes: `Estorno ${numeroEstorno} de ${params.lancamentoAlvo.tipo} (${params.lancamentoAlvo.valor}c) — Motivo: ${just.slice(0, 120)}`,
         quando: serverTimestamp(),
       });
     });
@@ -1102,6 +1174,7 @@ export async function estornarLancamento(params: {
         ...existingLancamentos,
         {
           id: estornoId,
+          numero: numeroEstorno,
           tipo: 'estorno',
           valor: params.lancamentoAlvo.valor,
           forma: params.lancamentoAlvo.forma,
@@ -1114,6 +1187,14 @@ export async function estornarLancamento(params: {
   } catch (syncErr) {
     console.warn('Aviso ao sincronizar link público após estorno:', syncErr);
   }
+
+  return {
+    lancamentoId: estornoId,
+    numero: numeroEstorno,
+    saldoAnterior,
+    novoSaldo: resultadoCarteiraFinal.saldoDevedor,
+    limiteCredito: limiteCreditoCliente,
+  };
 }
 
 export async function verificarPinDono(comercio: Comercio, pinInput: string): Promise<string> {
@@ -1170,8 +1251,8 @@ export async function salvarConfigComercio(params: {
   uid: string;
 }): Promise<void> {
   const nomeLimpo = params.nome.trim();
-  if (nomeLimpo.length < 2 || nomeLimpo.length > 80) {
-    throw new Error('O nome do comércio deve ter entre 2 e 80 caracteres.');
+  if (nomeLimpo.length < 3 || nomeLimpo.length > 80) {
+    throw new Error('O nome do comércio deve ter entre 3 e 80 caracteres.');
   }
 
   let pixChaveNorm = '';
@@ -1531,6 +1612,7 @@ export async function gerarLinkConsulta(params: {
       .slice(0, 30)
       .map((l) => ({
         id: l.id,
+        numero: l.numero,
         tipo: l.tipo,
         valor: l.valor,
         forma: l.forma,
@@ -1835,6 +1917,11 @@ export async function carregarDadosExemplo(params: {
     return { adicionados: 0, ignorados: ficticios.length };
   }
 
+  const comRef = doc(db, 'comercios', params.comercioId);
+  const comSnap = await getDoc(comRef);
+  const seqInicial = Number(comSnap.data()?.ultimoNumeroLancamento ?? 0);
+  let seqAtual = seqInicial;
+
   const hojeBahia = getBahiaDateString(hoje);
   const clientesBatch = writeBatch(db);
   const lancamentosBatch = writeBatch(db);
@@ -1842,10 +1929,12 @@ export async function carregarDadosExemplo(params: {
   for (const item of pendentes) {
     const cliId = makeDocId('cli');
     const calcInput: LancamentoCalcInput[] = [];
-    const createdCompras: Array<{ id: string; valor: number; itens: string; venc: string }> = [];
+    const createdCompras: Array<{ id: string; numero: string; valor: number; itens: string; venc: string }> = [];
 
     item.compras.forEach((c, idx) => {
       const lId = makeDocId('lnc');
+      seqAtual += 1;
+      const numero = formatarNumeroLancamento('compra', seqAtual);
       calcInput.push({
         id: lId,
         tipo: 'compra',
@@ -1854,11 +1943,13 @@ export async function carregarDadosExemplo(params: {
         estornoDe: '',
         criadoEmMs: hoje.getTime() - (20 - idx) * 1000,
       });
-      createdCompras.push({ id: lId, valor: c.valor, itens: c.itens, venc: c.venc });
+      createdCompras.push({ id: lId, numero, valor: c.valor, itens: c.itens, venc: c.venc });
     });
 
     item.pagamentos.forEach((p, idx) => {
       const lId = makeDocId('lnc');
+      seqAtual += 1;
+      const numero = formatarNumeroLancamento('pagamento', seqAtual);
       calcInput.push({
         id: lId,
         tipo: 'pagamento',
@@ -1870,6 +1961,7 @@ export async function carregarDadosExemplo(params: {
       lancamentosBatch.set(doc(db, 'lancamentos', lId), {
         comercioId: params.comercioId,
         clienteId: cliId,
+        numero,
         tipo: 'pagamento',
         valor: p.valor,
         forma: p.forma,
@@ -1911,6 +2003,7 @@ export async function carregarDadosExemplo(params: {
       lancamentosBatch.set(doc(db, 'lancamentos', c.id), {
         comercioId: params.comercioId,
         clienteId: cliId,
+        numero: c.numero,
         tipo: 'compra',
         valor: c.valor,
         forma: 'fiado',
@@ -1933,6 +2026,10 @@ export async function carregarDadosExemplo(params: {
       proximoVencimento: calc.proximoVencimento,
       atualizadoEm: serverTimestamp(),
     });
+  }
+
+  if (seqAtual > seqInicial) {
+    lancamentosBatch.update(comRef, { ultimoNumeroLancamento: seqAtual });
   }
 
   lancamentosBatch.set(doc(db, 'auditoria', makeDocId('aud')), {
