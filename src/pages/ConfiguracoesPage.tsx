@@ -39,6 +39,8 @@ export const ConfiguracoesPage: React.FC = () => {
   const [confirmandoAnon, setConfirmandoAnon] = useState(false);
   const [msgLgpd, setMsgLgpd] = useState<string | null>(null);
   const [carregandoDemo, setCarregandoDemo] = useState(false);
+  const [msgDemo, setMsgDemo] = useState<string | null>(null);
+  const [erroDemo, setErroDemo] = useState<string | null>(null);
 
   useEffect(() => {
     if (comercio) {
@@ -412,23 +414,52 @@ export const ConfiguracoesPage: React.FC = () => {
                 <span>Exportar dados do comércio (JSON)</span>
               </button>
 
-              {clientes.length === 0 && (
-                <button
-                  type="button"
-                  disabled={carregandoDemo}
-                  onClick={async () => {
-                    setCarregandoDemo(true);
-                    try {
-                      await carregarDadosExemplo({ comercioId: comercio.id, uid: usuario.uid });
-                    } finally {
-                      setCarregandoDemo(false);
+              <button
+                type="button"
+                disabled={carregandoDemo}
+                onClick={async () => {
+                  setMsgDemo(null);
+                  setErroDemo(null);
+                  setCarregandoDemo(true);
+                  try {
+                    const res = await carregarDadosExemplo({
+                      comercioId: comercio.id,
+                      uid: usuario.uid,
+                    });
+                    if (res.adicionados > 0) {
+                      setMsgDemo(
+                        `${res.adicionados} cliente(s) de exemplo adicionado(s), incluindo compras vencidas e perto do limite.`
+                      );
+                    } else {
+                      setMsgDemo('Todos os clientes de exemplo já foram adicionados neste comércio.');
                     }
-                  }}
-                  className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-white px-5 py-3 text-base font-semibold text-[#14211E] hover:bg-slate-50"
-                >
-                  <Sparkles className="h-5 w-5 text-amber-600" />
-                  <span>{carregandoDemo ? 'Gerando...' : 'Carregar dados de exemplo'}</span>
-                </button>
+                  } catch (err) {
+                    setErroDemo(
+                      err instanceof Error
+                        ? err.message
+                        : 'Não foi possível adicionar os clientes de exemplo.'
+                    );
+                  } finally {
+                    setCarregandoDemo(false);
+                  }
+                }}
+                className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-white px-5 py-3 text-base font-semibold text-[#14211E] hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Sparkles className="h-5 w-5 text-amber-600" />
+                <span>
+                  {carregandoDemo
+                    ? 'Gerando...'
+                    : 'Adicionar clientes de exemplo (com vencidos)'}
+                </span>
+              </button>
+
+              {msgDemo && (
+                <p className="rounded-xl bg-teal-50 p-3 text-sm text-teal-900">{msgDemo}</p>
+              )}
+              {erroDemo && (
+                <p className="rounded-xl bg-red-50 p-3 text-sm text-red-800" role="alert">
+                  {erroDemo}
+                </p>
               )}
             </div>
           </div>

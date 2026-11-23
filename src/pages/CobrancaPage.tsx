@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, Check, CheckCircle2, MessageCircle, Save } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, MessageCircle, Save, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
   buildWhatsAppUrl,
@@ -10,7 +10,7 @@ import {
   formatWhatsAppDisplay,
   getBahiaDateString,
 } from '../lib/businessRules';
-import { salvarObservacaoDonoCliente } from '../lib/firestoreService';
+import { carregarDadosExemplo, salvarObservacaoDonoCliente } from '../lib/firestoreService';
 
 type FiltroCobranca = 'todos' | 'mais_15' | 'ate_7';
 
@@ -22,6 +22,9 @@ export const CobrancaPage: React.FC = () => {
   const [salvandoObsId, setSalvandoObsId] = useState<string | null>(null);
   const [salvoObsId, setSalvoObsId] = useState<string | null>(null);
   const [erroObs, setErroObs] = useState<string | null>(null);
+  const [carregandoDemo, setCarregandoDemo] = useState(false);
+  const [msgDemo, setMsgDemo] = useState<string | null>(null);
+  const [erroDemo, setErroDemo] = useState<string | null>(null);
 
   const hojeBahia = getBahiaDateString();
 
@@ -69,6 +72,29 @@ export const CobrancaPage: React.FC = () => {
       setErroObs(err instanceof Error ? err.message : 'Erro ao salvar observação.');
     } finally {
       setSalvandoObsId(null);
+    }
+  };
+
+  const handleCarregarExemplo = async () => {
+    if (!comercio || !usuario || !isDono) return;
+    setMsgDemo(null);
+    setErroDemo(null);
+    setCarregandoDemo(true);
+    try {
+      const res = await carregarDadosExemplo({ comercioId: comercio.id, uid: usuario.uid });
+      if (res.adicionados > 0) {
+        setMsgDemo(
+          `${res.adicionados} cliente(s) de exemplo adicionado(s), incluindo 3 com compras vencidas (5, 12 e 20 dias de atraso).`
+        );
+      } else {
+        setMsgDemo('Todos os clientes de exemplo já estão cadastrados neste comércio.');
+      }
+    } catch (err) {
+      setErroDemo(
+        err instanceof Error ? err.message : 'Não foi possível adicionar os clientes de exemplo.'
+      );
+    } finally {
+      setCarregandoDemo(false);
     }
   };
 
@@ -124,6 +150,18 @@ export const CobrancaPage: React.FC = () => {
             {erroObs}
           </p>
         )}
+
+        {msgDemo && (
+          <p className="rounded-xl bg-teal-50 px-4 py-3 text-sm font-medium text-teal-900">
+            {msgDemo}
+          </p>
+        )}
+
+        {erroDemo && (
+          <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+            {erroDemo}
+          </p>
+        )}
       </div>
 
       {vencidosComAtraso.length === 0 ? (
@@ -133,6 +171,23 @@ export const CobrancaPage: React.FC = () => {
           <p className="mt-1 text-base text-slate-600">
             Todos os clientes estão em dia com seus vencimentos.
           </p>
+          {isDono && (
+            <div className="mt-5 flex justify-center">
+              <button
+                type="button"
+                onClick={handleCarregarExemplo}
+                disabled={carregandoDemo}
+                className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-[#FAFAF8] px-5 py-3 text-base font-semibold text-[#14211E] hover:bg-slate-100 disabled:opacity-50"
+              >
+                <Sparkles className="h-5 w-5 text-amber-600" />
+                <span>
+                  {carregandoDemo
+                    ? 'Adicionando clientes...'
+                    : 'Adicionar clientes de exemplo com compras vencidas'}
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       ) : listaFiltrada.length === 0 ? (
         <div className="rounded-2xl border border-[#E4E4DF] bg-white p-8 text-center">

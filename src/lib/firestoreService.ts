@@ -1739,13 +1739,13 @@ export async function consultarSaldoPublicoPorToken(
 export async function carregarDadosExemplo(params: {
   comercioId: string;
   uid: string;
-}): Promise<void> {
+}): Promise<{ adicionados: number; ignorados: number }> {
   const existentes = await getDocs(
     query(collection(db, 'clientes'), where('comercioId', '==', params.comercioId))
   );
-  if (!existentes.empty) {
-    throw new Error('Os dados de exemplo só podem ser carregados quando o comércio ainda não tem clientes.');
-  }
+  const existingWhatsApps = new Set(
+    existentes.docs.map((d) => String(d.data().whatsapp || '').trim())
+  );
 
   const hoje = new Date();
   const diaMs = 24 * 60 * 60 * 1000;
@@ -1758,6 +1758,7 @@ export async function carregarDadosExemplo(params: {
       whatsapp: '+5571900001001',
       limiteCredito: 30000,
       diaVencimento: 5,
+      observacaoDono: 'Combinou de acertar parte até sexta-feira.',
       compras: [
         { valor: 14500, itens: 'Arroz, feijão, óleo e café', venc: isoFromOffset(-12), aberto: 14500 },
         { valor: 4200, itens: 'Pão francês e manteiga', venc: isoFromOffset(8), aberto: 4200 },
@@ -1769,6 +1770,7 @@ export async function carregarDadosExemplo(params: {
       whatsapp: '+5571900001002',
       limiteCredito: 25000,
       diaVencimento: 10,
+      observacaoDono: '',
       compras: [{ valor: 18900, itens: 'Carne moída, frango e temperos', venc: isoFromOffset(-5), aberto: 18900 }],
       pagamentos: [],
     },
@@ -1777,6 +1779,7 @@ export async function carregarDadosExemplo(params: {
       whatsapp: '+5571900001003',
       limiteCredito: 40000,
       diaVencimento: 15,
+      observacaoDono: '',
       compras: [{ valor: 12000, itens: 'Leite, açúcar e biscoitos', venc: isoFromOffset(10), aberto: 12000 }],
       pagamentos: [],
     },
@@ -1785,6 +1788,7 @@ export async function carregarDadosExemplo(params: {
       whatsapp: '+5571900001004',
       limiteCredito: 20000,
       diaVencimento: 20,
+      observacaoDono: '',
       compras: [{ valor: 9500, itens: 'Água mineral e gás de cozinha', venc: isoFromOffset(14), aberto: 6500 }],
       pagamentos: [{ valor: 3000, forma: 'pix_manual' as const }],
     },
@@ -1793,6 +1797,7 @@ export async function carregarDadosExemplo(params: {
       whatsapp: '+5571900001005',
       limiteCredito: 35000,
       diaVencimento: 10,
+      observacaoDono: '',
       compras: [{ valor: 8000, itens: 'Frutas e verduras da feira', venc: isoFromOffset(-2), aberto: 0 }],
       pagamentos: [{ valor: 8000, forma: 'pix_manual' as const }],
     },
@@ -1801,6 +1806,7 @@ export async function carregarDadosExemplo(params: {
       whatsapp: '+5571900001006',
       limiteCredito: 15000,
       diaVencimento: 25,
+      observacaoDono: 'Atraso acima de 15 dias e perto do limite.',
       compras: [{ valor: 13200, itens: 'Charque, farinha e ovos', venc: isoFromOffset(-20), aberto: 13200 }],
       pagamentos: [],
     },
@@ -1809,6 +1815,7 @@ export async function carregarDadosExemplo(params: {
       whatsapp: '+5571900001007',
       limiteCredito: 50000,
       diaVencimento: 12,
+      observacaoDono: '',
       compras: [{ valor: 21500, itens: 'Compras da semana', venc: isoFromOffset(6), aberto: 21500 }],
       pagamentos: [],
     },
@@ -1817,16 +1824,22 @@ export async function carregarDadosExemplo(params: {
       whatsapp: '+5571900001008',
       limiteCredito: 20000,
       diaVencimento: 18,
+      observacaoDono: '',
       compras: [{ valor: 5400, itens: 'Refrigerante e pão doce', venc: isoFromOffset(-1), aberto: 0 }],
       pagamentos: [{ valor: 5400, forma: 'debito' as const }],
     },
   ];
 
+  const pendentes = ficticios.filter((item) => !existingWhatsApps.has(item.whatsapp));
+  if (pendentes.length === 0) {
+    return { adicionados: 0, ignorados: ficticios.length };
+  }
+
   const hojeBahia = getBahiaDateString(hoje);
   const clientesBatch = writeBatch(db);
   const lancamentosBatch = writeBatch(db);
 
-  for (const item of ficticios) {
+  for (const item of pendentes) {
     const cliId = makeDocId('cli');
     const calcInput: LancamentoCalcInput[] = [];
     const createdCompras: Array<{ id: string; valor: number; itens: string; venc: string }> = [];
@@ -1874,6 +1887,7 @@ export async function carregarDadosExemplo(params: {
 
     const calc = recalcularCarteiraCliente(calcInput, hojeBahia);
 
+    // Regras do Firestore exigem criação do cliente com saldo zerado antes de lançar compras
     clientesBatch.set(doc(db, 'clientes', cliId), {
       comercioId: params.comercioId,
       nome: item.nome,
@@ -1884,11 +1898,11 @@ export async function carregarDadosExemplo(params: {
       diaVencimento: item.diaVencimento,
       ativo: true,
       anonimizado: false,
-      saldoDevedor: calc.saldoDevedor,
-      valorVencido: calc.valorVencido,
-      valorAVencer: calc.valorAVencer,
-      proximoVencimento: calc.proximoVencimento,
-      observacaoDono: '',
+      saldoDevedor: 0,
+      valorVencido: 0,
+      valorAVencer: 0,
+      proximoVencimento: '',
+      observacaoDono: item.observacaoDono,
       criadoEm: serverTimestamp(),
       atualizadoEm: serverTimestamp(),
     });
@@ -1911,19 +1925,31 @@ export async function carregarDadosExemplo(params: {
         criadoEm: serverTimestamp(),
       });
     }
+
+    lancamentosBatch.update(doc(db, 'clientes', cliId), {
+      saldoDevedor: calc.saldoDevedor,
+      valorVencido: calc.valorVencido,
+      valorAVencer: calc.valorAVencer,
+      proximoVencimento: calc.proximoVencimento,
+      atualizadoEm: serverTimestamp(),
+    });
   }
 
   lancamentosBatch.set(doc(db, 'auditoria', makeDocId('aud')), {
     comercioId: params.comercioId,
     quem: params.uid,
     acao: 'dados_exemplo_carregados',
-    detalhes: '8 clientes fictícios e lançamentos de exemplo gerados.',
+    detalhes: `${pendentes.length} cliente(s) fictício(s) e lançamentos de exemplo gerados.`,
     quando: serverTimestamp(),
   });
 
   try {
     await clientesBatch.commit();
     await lancamentosBatch.commit();
+    return {
+      adicionados: pendentes.length,
+      ignorados: ficticios.length - pendentes.length,
+    };
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'clientes');
   }
