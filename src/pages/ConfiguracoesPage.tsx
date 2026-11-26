@@ -23,6 +23,7 @@ export const ConfiguracoesPage: React.FC = () => {
   const [pixChave, setPixChave] = useState('');
   const [pixRecebedor, setPixRecebedor] = useState('');
   const [whatsappContato, setWhatsappContato] = useState('');
+  const [prazoLgpdDias, setPrazoLgpdDias] = useState(15);
   const [salvandoConfig, setSalvandoConfig] = useState(false);
   const [msgConfig, setMsgConfig] = useState<string | null>(null);
   const [erroConfig, setErroConfig] = useState<string | null>(null);
@@ -51,6 +52,7 @@ export const ConfiguracoesPage: React.FC = () => {
       setWhatsappContato(
         comercio.whatsappContato ? maskWhatsAppInput(comercio.whatsappContato.replace(/^\+55/, '')) : ''
       );
+      setPrazoLgpdDias(comercio.prazoSolicitacaoTitularDias ?? 15);
     }
   }, [comercio]);
 
@@ -98,6 +100,7 @@ export const ConfiguracoesPage: React.FC = () => {
         pixChave: pixChave.trim(),
         pixRecebedor: pixRecebedor.trim() || nomeLimpo,
         whatsappContato: whatsappContato.trim(),
+        prazoSolicitacaoTitularDias: prazoLgpdDias,
         uid: usuario.uid,
       });
       setNomeComercio(nomeLimpo);
@@ -229,6 +232,26 @@ export const ConfiguracoesPage: React.FC = () => {
                 placeholder="••••"
                 className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 font-mono-nums text-base text-[#14211E] focus:border-teal-700 focus:outline-none"
               />
+            </div>
+
+            <div>
+              <label htmlFor="cfg-prazo-lgpd" className="block text-base font-semibold text-[#14211E]">
+                Prazo para solicitações LGPD do titular (dias)
+              </label>
+              <input
+                id="cfg-prazo-lgpd"
+                type="number"
+                min={1}
+                max={90}
+                value={prazoLgpdDias}
+                onChange={(e) =>
+                  setPrazoLgpdDias(Math.max(1, Math.min(90, Number(e.target.value) || 15)))
+                }
+                className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 font-mono-nums text-base text-[#14211E] focus:border-teal-700 focus:outline-none"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Padrão de 15 dias para atendimento de acesso, correção, portabilidade ou exclusão (RF19).
+              </p>
             </div>
 
             <div className="border-t border-[#ECECE7] pt-4 space-y-4">

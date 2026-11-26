@@ -16,6 +16,7 @@ export interface Comercio {
   pixRecebedor?: string;
   whatsappContato?: string;
   ultimoNumeroLancamento?: number;
+  prazoSolicitacaoTitularDias?: number;
 }
 
 export interface Usuario {
@@ -36,6 +37,7 @@ export interface Cliente {
   whatsapp: string;
   consentimentoWhatsapp: boolean;
   consentimentoEm: Date;
+  semContatoWhatsapp?: boolean;
   limiteCredito: number;
   diaVencimento: number;
   ativo: boolean;
@@ -47,6 +49,37 @@ export interface Cliente {
   observacaoDono?: string;
   criadoEm: Date;
   atualizadoEm: Date;
+}
+
+export type TipoConsentimento = 'consentimento' | 'opt_out';
+export type CanalConsentimento = 'cadastro' | 'whatsapp' | 'balcao' | 'link_consulta';
+
+export interface ConsentimentoEvento {
+  id: string;
+  comercioId: string;
+  clienteId: string;
+  tipo: TipoConsentimento;
+  dataHora: Date;
+  canal: CanalConsentimento;
+  responsavel: string;
+  origem: string;
+}
+
+export type TipoSolicitacaoTitular = 'acesso' | 'correcao' | 'portabilidade' | 'exclusao';
+export type StatusSolicitacaoTitular = 'aberta' | 'atendida';
+
+export interface SolicitacaoTitular {
+  id: string;
+  comercioId: string;
+  clienteId: string;
+  tipo: TipoSolicitacaoTitular;
+  dataAbertura: Date;
+  prazoEm: Date;
+  status: StatusSolicitacaoTitular;
+  responsavel: string;
+  observacao: string;
+  concluidaPor?: string;
+  dataConclusao?: Date | null;
 }
 
 export interface Lancamento {
@@ -542,4 +575,86 @@ export function formatarNomePropio(nome: string): string {
       return lower.charAt(0).toLocaleUpperCase('pt-BR') + lower.slice(1);
     })
     .join(' ');
+}
+
+/**
+ * RF17 / RN12: Regra central de bloqueio de envio pelo WhatsApp.
+ * Retorna false se não houver consentimento OU se houver opt-out (semContatoWhatsapp)
+ * OU se o cliente estiver anonimizado.
+ */
+export function podeEnviarWhatsApp(
+  cliente:
+    | {
+        consentimentoWhatsapp?: boolean;
+        semContatoWhatsapp?: boolean;
+        anonimizado?: boolean;
+        whatsapp?: string;
+      }
+    | null
+    | undefined
+): boolean {
+  if (!cliente) return false;
+  if (cliente.anonimizado || cliente.whatsapp === 'ANONIMIZADO') return false;
+  if (!cliente.consentimentoWhatsapp) return false;
+  if (cliente.semContatoWhatsapp) return false;
+  return true;
+}
+
+export function motivoBloqueioWhatsApp(
+  cliente:
+    | {
+        consentimentoWhatsapp?: boolean;
+        semContatoWhatsapp?: boolean;
+        anonimizado?: boolean;
+        whatsapp?: string;
+      }
+    | null
+    | undefined
+): string {
+  if (!cliente) return 'Dados do cliente indisponíveis para envio.';
+  if (cliente.anonimizado || cliente.whatsapp === 'ANONIMIZADO') {
+    return 'Envio bloqueado: cliente anonimizado pela LGPD.';
+  }
+  if (cliente.semContatoWhatsapp) {
+    return 'Envio bloqueado: cliente pediu opt-out (não receber mensagens no WhatsApp).';
+  }
+  if (!cliente.consentimentoWhatsapp) {
+    return 'Envio bloqueado: cliente sem consentimento registrado para WhatsApp.';
+  }
+  return '';
+}
+
+/**
+ * RF19: Calcula a data limite de atendimento de solicitação do titular (padrão 15 dias).
+ */
+export function calcularDataPrazoSolicitacao(
+  abertura: Date = new Date(),
+  diasPrazo: number = 15
+): Date {
+  const diasValidos = Math.max(1, Math.min(90, Math.round(diasPrazo || 15)));
+  return new Date(abertura.getTime() + diasValidos * 86_400_000);
+}
+
+export type SituacaoPrazoSolicitacao = 'atendida' | 'vencida' | 'perto_prazo' | 'no_prazo';
+
+/**
+ * RF19: Avalia se a solicitação está no prazo, perto do vencimento (<= 3 dias) ou vencida.
+ */
+export function avaliarPrazoSolicitacao(
+  prazoEm: Date,
+  status: StatusSolicitacaoTitular,
+  agora: Date = new Date()
+): { situacao: SituacaoPrazoSolicitacao; diasRestantes: number } {
+  if (status === 'atendida') {
+    return { situacao: 'atendida', diasRestantes: 0 };
+  }
+  const diffMs = prazoEm.getTime() - agora.getTime();
+  const diasRestantes = Math.ceil(diffMs / 86_400_000);
+  if (diffMs < 0) {
+    return { situacao: 'vencida', diasRestantes };
+  }
+  if (diasRestantes <= 3) {
+    return { situacao: 'perto_prazo', diasRestantes };
+  }
+  return { situacao: 'no_prazo', diasRestantes };
 }

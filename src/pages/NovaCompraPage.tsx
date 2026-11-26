@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import {
   formatCentavos,
   formatWhatsAppDisplay,
+  motivoBloqueioWhatsApp,
+  podeEnviarWhatsApp,
   validarCompra,
 } from '../lib/businessRules';
 import { registrarCompra } from '../lib/firestoreService';
@@ -109,6 +111,8 @@ export const NovaCompraPage: React.FC = () => {
           lancamentoId: idempotencyKey,
           registradoPorNome: usuario.nome,
           offline: true,
+          podeEnviarWhatsApp: podeEnviarWhatsApp(clienteSelecionado),
+          motivoBloqueioWhatsApp: motivoBloqueioWhatsApp(clienteSelecionado),
         });
         return;
       }
@@ -141,6 +145,8 @@ export const NovaCompraPage: React.FC = () => {
         numero: res.numero,
         registradoPorNome: usuario.nome,
         offline: false,
+        podeEnviarWhatsApp: podeEnviarWhatsApp(clienteSelecionado),
+        motivoBloqueioWhatsApp: motivoBloqueioWhatsApp(clienteSelecionado),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro ao registrar compra.';
@@ -174,6 +180,8 @@ export const NovaCompraPage: React.FC = () => {
           lancamentoId: idempotencyKey,
           registradoPorNome: usuario.nome,
           offline: true,
+          podeEnviarWhatsApp: podeEnviarWhatsApp(clienteSelecionado),
+          motivoBloqueioWhatsApp: motivoBloqueioWhatsApp(clienteSelecionado),
         });
       } else {
         if (msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')) {

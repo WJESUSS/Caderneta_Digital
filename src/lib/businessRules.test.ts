@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   avaliarLinkConsulta,
+  avaliarPrazoSolicitacao,
+  calcularDataPrazoSolicitacao,
   calcularDiasAtraso,
   calcularVencimentoCompra,
   estaPertoDoLimite,
@@ -9,6 +11,7 @@ import {
   isCompraVencida,
   obterNumeroLancamentoExibicao,
   percentualLimiteUsado,
+  podeEnviarWhatsApp,
   recalcularCarteiraCliente,
   validarCompra,
   validarPagamento,
@@ -281,5 +284,61 @@ describe('Recibo e comprovante - Número curto e formatação de nome próprio',
     expect(formatarNomePropio('joão DE oliveira')).toBe('João de Oliveira');
     expect(formatarNomePropio('ANA DAS DORES DO CARMO')).toBe('Ana das Dores do Carmo');
     expect(formatarNomePropio('   ')).toBe('');
+  });
+});
+
+describe('RF17 / RN12 - Opt-out e bloqueio de envio por WhatsApp', () => {
+  it('permite envio para cliente com consentimento e sem opt-out', () => {
+    expect(
+      podeEnviarWhatsApp({
+        consentimentoWhatsapp: true,
+        semContatoWhatsapp: false,
+        anonimizado: false,
+        whatsapp: '+5571999998888',
+      })
+    ).toBe(true);
+  });
+
+  it('bloqueia envio quando cliente tem opt-out (mesmo mantendo consentimentoWhatsapp true)', () => {
+    expect(
+      podeEnviarWhatsApp({
+        consentimentoWhatsapp: true,
+        semContatoWhatsapp: true,
+        anonimizado: false,
+        whatsapp: '+5571999998888',
+      })
+    ).toBe(false);
+  });
+
+  it('bloqueia envio para cliente sem consentimento ou anonimizado', () => {
+    expect(
+      podeEnviarWhatsApp({
+        consentimentoWhatsapp: false,
+        semContatoWhatsapp: false,
+        anonimizado: false,
+        whatsapp: '+5571999998888',
+      })
+    ).toBe(false);
+    expect(
+      podeEnviarWhatsApp({
+        consentimentoWhatsapp: true,
+        semContatoWhatsapp: false,
+        anonimizado: true,
+        whatsapp: 'ANONIMIZADO',
+      })
+    ).toBe(false);
+  });
+});
+
+describe('RF19 - Prazo de solicitações do titular (LGPD)', () => {
+  it('calcula prazo padrão de 15 dias e identifica no prazo, perto do prazo e vencida', () => {
+    const abertura = new Date('2026-11-01T12:00:00Z');
+    const prazo = calcularDataPrazoSolicitacao(abertura, 15);
+    expect(prazo.toISOString()).toBe('2026-11-16T12:00:00.000Z');
+
+    expect(avaliarPrazoSolicitacao(prazo, 'aberta', new Date('2026-11-10T12:00:00Z')).situacao).toBe('no_prazo');
+    expect(avaliarPrazoSolicitacao(prazo, 'aberta', new Date('2026-11-14T12:00:00Z')).situacao).toBe('perto_prazo');
+    expect(avaliarPrazoSolicitacao(prazo, 'aberta', new Date('2026-11-17T12:00:00Z')).situacao).toBe('vencida');
+    expect(avaliarPrazoSolicitacao(prazo, 'atendida', new Date('2026-11-20T12:00:00Z')).situacao).toBe('atendida');
   });
 });

@@ -49,7 +49,8 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'nome', 'limitePadrao', 'pinHash', 'pinSalt',
           'pinTentativasErradas', 'pinBloqueadoAte', 'donoUid', 'criadoEm',
-          'pixChave', 'pixRecebedor', 'whatsappContato', 'ultimoNumeroLancamento'
+          'pixChave', 'pixRecebedor', 'whatsappContato', 'ultimoNumeroLancamento',
+          'prazoSolicitacaoTitularDias'
         ])
         && data.nome is string && data.nome.size() >= 2 && data.nome.size() <= 80
         && data.limitePadrao is int && data.limitePadrao >= 0 && data.limitePadrao <= 100000000
@@ -62,7 +63,8 @@ service cloud.firestore {
         && (!('pixChave' in data) || (data.pixChave is string && data.pixChave.size() <= 140))
         && (!('pixRecebedor' in data) || (data.pixRecebedor is string && data.pixRecebedor.size() <= 60))
         && (!('whatsappContato' in data) || (data.whatsappContato is string && data.whatsappContato.size() <= 20 && (data.whatsappContato == '' || data.whatsappContato.matches('^\\+55\\d{10,11}$'))))
-        && (!('ultimoNumeroLancamento' in data) || (data.ultimoNumeroLancamento is int && data.ultimoNumeroLancamento >= 0 && data.ultimoNumeroLancamento <= 100000000));
+        && (!('ultimoNumeroLancamento' in data) || (data.ultimoNumeroLancamento is int && data.ultimoNumeroLancamento >= 0 && data.ultimoNumeroLancamento <= 100000000))
+        && (!('prazoSolicitacaoTitularDias' in data) || (data.prazoSolicitacaoTitularDias is int && data.prazoSolicitacaoTitularDias >= 1 && data.prazoSolicitacaoTitularDias <= 90));
     }
 
     function isValidUsuario(data) {
@@ -86,7 +88,7 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'comercioId', 'nome', 'whatsapp', 'consentimentoWhatsapp', 'consentimentoEm',
-          'limiteCredito', 'diaVencimento', 'ativo', 'anonimizado',
+          'semContatoWhatsapp', 'limiteCredito', 'diaVencimento', 'ativo', 'anonimizado',
           'saldoDevedor', 'valorVencido', 'valorAVencer', 'proximoVencimento',
           'observacaoDono', 'criadoEm', 'atualizadoEm'
         ])
@@ -96,6 +98,7 @@ service cloud.firestore {
         && data.whatsapp.matches('^(\\+55\\d{10,11}|ANONIMIZADO)$')
         && data.consentimentoWhatsapp is bool
         && data.consentimentoEm is timestamp
+        && (!('semContatoWhatsapp' in data) || data.semContatoWhatsapp is bool)
         && data.limiteCredito is int && data.limiteCredito >= 0 && data.limiteCredito <= 100000000
         && data.diaVencimento is int && data.diaVencimento >= 1 && data.diaVencimento <= 28
         && data.ativo is bool
@@ -200,6 +203,33 @@ service cloud.firestore {
         && data.quando is timestamp;
     }
 
+    function isValidConsentimento(data) {
+      return data.keys().hasAll(['comercioId', 'clienteId', 'tipo', 'dataHora', 'canal', 'responsavel', 'origem'])
+        && data.keys().hasOnly(['comercioId', 'clienteId', 'tipo', 'dataHora', 'canal', 'responsavel', 'origem'])
+        && isValidId(data.comercioId)
+        && isValidId(data.clienteId)
+        && data.tipo in ['consentimento', 'opt_out']
+        && data.dataHora is timestamp
+        && data.canal in ['cadastro', 'whatsapp', 'balcao', 'link_consulta']
+        && isValidId(data.responsavel)
+        && data.origem is string && data.origem.size() >= 2 && data.origem.size() <= 160;
+    }
+
+    function isValidSolicitacaoTitular(data) {
+      return data.keys().hasAll(['comercioId', 'clienteId', 'tipo', 'dataAbertura', 'prazoEm', 'status', 'responsavel', 'observacao'])
+        && data.keys().hasOnly(['comercioId', 'clienteId', 'tipo', 'dataAbertura', 'prazoEm', 'status', 'responsavel', 'observacao', 'concluidaPor', 'dataConclusao'])
+        && isValidId(data.comercioId)
+        && isValidId(data.clienteId)
+        && data.tipo in ['acesso', 'correcao', 'portabilidade', 'exclusao']
+        && data.dataAbertura is timestamp
+        && data.prazoEm is timestamp
+        && data.status in ['aberta', 'atendida']
+        && isValidId(data.responsavel)
+        && data.observacao is string && data.observacao.size() <= 300
+        && (!('concluidaPor' in data) || (data.concluidaPor is string && data.concluidaPor.size() <= 128))
+        && (!('dataConclusao' in data) || data.dataConclusao is timestamp);
+    }
+
     // --- Collection Rules ---
 
     match /comercios/{comercioId} {
@@ -221,7 +251,7 @@ service cloud.firestore {
           (isDono(comercioId)
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'nome', 'limitePadrao', 'pinHash', 'pinSalt', 'pinTentativasErradas', 'pinBloqueadoAte',
-              'pixChave', 'pixRecebedor', 'whatsappContato'
+              'pixChave', 'pixRecebedor', 'whatsappContato', 'prazoSolicitacaoTitularDias'
             ]))
           || (isMembroComercio(comercioId)
             && incoming().diff(existing()).affectedKeys().hasOnly([
@@ -294,6 +324,7 @@ service cloud.firestore {
         && incoming().valorVencido == 0
         && incoming().valorAVencer == 0
         && incoming().anonimizado == false
+        && (!('semContatoWhatsapp' in incoming()) || incoming().semContatoWhatsapp == false)
         && (isDono(incoming().comercioId)
             || incoming().limiteCredito == get(/databases/$(database)/documents/comercios/$(incoming().comercioId)).data.limitePadrao);
       allow update: if isValidId(clienteId)
@@ -305,16 +336,21 @@ service cloud.firestore {
           (isDono(existing().comercioId)
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'nome', 'whatsapp', 'consentimentoWhatsapp', 'consentimentoEm',
-              'limiteCredito', 'diaVencimento', 'ativo', 'anonimizado',
+              'semContatoWhatsapp', 'limiteCredito', 'diaVencimento', 'ativo', 'anonimizado',
               'saldoDevedor', 'valorVencido', 'valorAVencer', 'proximoVencimento',
               'observacaoDono', 'atualizadoEm'
             ]))
           || (isMembroComercio(existing().comercioId)
             && existing().anonimizado == false
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'nome', 'whatsapp', 'consentimentoWhatsapp', 'consentimentoEm',
-              'diaVencimento', 'atualizadoEm'
+              'nome', 'whatsapp', 'atualizadoEm'
             ]))
+          || (isMembroComercio(existing().comercioId)
+            && existing().anonimizado == false
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'semContatoWhatsapp', 'atualizadoEm'
+            ])
+            && incoming().semContatoWhatsapp == true)
           || (isMembroComercio(existing().comercioId)
             && existing().anonimizado == false
             && incoming().diff(existing()).affectedKeys().hasOnly([
@@ -435,6 +471,56 @@ service cloud.firestore {
         && incoming().quem == request.auth.uid
         && incoming().quando == request.time;
       allow update, delete: if false;
+    }
+
+    match /consentimentos/{consentimentoId} {
+      allow get: if isValidId(consentimentoId) && isMembroComercio(resource.data.comercioId);
+      allow list: if isMembroComercio(resource.data.comercioId);
+      allow create: if isValidId(consentimentoId)
+        && isValidConsentimento(incoming())
+        && isMembroComercio(incoming().comercioId)
+        && incoming().responsavel == request.auth.uid
+        && incoming().dataHora == request.time
+        && existsAfter(/databases/$(database)/documents/clientes/$(incoming().clienteId))
+        && (
+          incoming().tipo == 'opt_out'
+          || isDono(incoming().comercioId)
+          || !exists(/databases/$(database)/documents/clientes/$(incoming().clienteId))
+        );
+      allow update, delete: if false;
+    }
+
+    match /solicitacoesTitular/{solicitacaoId} {
+      allow get: if isValidId(solicitacaoId) && isMembroComercio(resource.data.comercioId);
+      allow list: if isMembroComercio(resource.data.comercioId);
+      allow create: if isValidId(solicitacaoId)
+        && isValidSolicitacaoTitular(incoming())
+        && isMembroComercio(incoming().comercioId)
+        && incoming().responsavel == request.auth.uid
+        && incoming().dataAbertura == request.time
+        && incoming().prazoEm > request.time
+        && incoming().status == 'aberta'
+        && (!('concluidaPor' in incoming()) || incoming().concluidaPor == '')
+        && !('dataConclusao' in incoming())
+        && exists(/databases/$(database)/documents/clientes/$(incoming().clienteId))
+        && get(/databases/$(database)/documents/clientes/$(incoming().clienteId)).data.comercioId == incoming().comercioId;
+      allow update: if isValidId(solicitacaoId)
+        && isValidSolicitacaoTitular(incoming())
+        && isDono(existing().comercioId)
+        && existing().status == 'aberta'
+        && incoming().status == 'atendida'
+        && incoming().comercioId == existing().comercioId
+        && incoming().clienteId == existing().clienteId
+        && incoming().tipo == existing().tipo
+        && incoming().dataAbertura == existing().dataAbertura
+        && incoming().prazoEm == existing().prazoEm
+        && incoming().responsavel == existing().responsavel
+        && incoming().concluidaPor == request.auth.uid
+        && incoming().dataConclusao == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'observacao', 'concluidaPor', 'dataConclusao'
+        ]);
+      allow delete: if false;
     }
   }
 }

@@ -97,6 +97,7 @@ export const ClienteFormPage: React.FC = () => {
           nome: nome.trim(),
           whatsappInput: whatsapp,
           consentimentoWhatsapp: consentimento,
+          consentimentoAnterior: clienteExistente.consentimentoWhatsapp,
           limiteCreditoCentavos: limiteCentavos,
           diaVencimento,
           ativo: isDono ? ativo : undefined,
@@ -202,26 +203,54 @@ export const ClienteFormPage: React.FC = () => {
               min={1}
               max={28}
               required
+              disabled={isEdit && !isDono}
               value={diaVencimento}
               onChange={(e) =>
                 setDiaVencimento(Math.max(1, Math.min(28, Number(e.target.value) || 1)))
               }
-              className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 font-mono-nums text-base text-[#14211E] focus:border-teal-700 focus:outline-none"
+              className="mt-1.5 min-h-[48px] w-full rounded-xl border border-[#D4D4CE] px-4 font-mono-nums text-base text-[#14211E] disabled:bg-slate-100 disabled:text-slate-600 focus:border-teal-700 focus:outline-none"
             />
+            {isEdit && !isDono && (
+              <p className="mt-1 text-xs text-slate-500">
+                Somente o Dono pode alterar o dia de vencimento após o cadastro.
+              </p>
+            )}
           </div>
         </div>
 
-        <label className="flex items-start gap-3 rounded-xl bg-[#FAFAF8] border border-[#E4E4DF] p-4 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={consentimento}
-            onChange={(e) => setConsentimento(e.target.checked)}
-            className="mt-1 h-5 w-5 rounded border-slate-300 text-teal-700 focus:ring-teal-700"
-          />
-          <span className="text-sm text-slate-700">
-            Confirmo que o cliente autorizou o cadastro e o envio de comprovantes/lembretes pelo WhatsApp (LGPD).
-          </span>
-        </label>
+        <div>
+          <label
+            className={`flex items-start gap-3 rounded-xl bg-[#FAFAF8] border border-[#E4E4DF] p-4 ${
+              (isEdit && !isDono) || (isEdit && isDono && clienteExistente?.consentimentoWhatsapp)
+                ? 'cursor-not-allowed opacity-80'
+                : 'cursor-pointer'
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={consentimento}
+              disabled={
+                (isEdit && !isDono) ||
+                Boolean(isEdit && isDono && clienteExistente?.consentimentoWhatsapp)
+              }
+              onChange={(e) => setConsentimento(e.target.checked)}
+              className="mt-1 h-5 w-5 rounded border-slate-300 text-teal-700 focus:ring-teal-700 disabled:opacity-60"
+            />
+            <span className="text-sm text-slate-700">
+              Confirmo que o cliente autorizou o cadastro e o envio de comprovantes/lembretes pelo WhatsApp (LGPD).
+            </span>
+          </label>
+          {isEdit && !isDono && (
+            <p className="mt-1 text-xs text-slate-500">
+              Somente o Dono altera o consentimento na edição. Para interromper mensagens, registre o opt-out na ficha do cliente.
+            </p>
+          )}
+          {isEdit && isDono && clienteExistente?.consentimentoWhatsapp && (
+            <p className="mt-1 text-xs text-slate-500">
+              Consentimento registrado no histórico. Para interromper mensagens sem apagar o histórico, use "Registrar opt-out" na ficha do cliente.
+            </p>
+          )}
+        </div>
 
         {isEdit && isDono && (
           <label className="flex items-center gap-3 pt-1 cursor-pointer">

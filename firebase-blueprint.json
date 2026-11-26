@@ -63,6 +63,10 @@
         "ultimoNumeroLancamento": {
           "type": "integer",
           "description": "Contador sequencial por comércio para gerar o número curto do lançamento (#CMP-0001, #PAG-0002, #EST-0003)."
+        },
+        "prazoSolicitacaoTitularDias": {
+          "type": "integer",
+          "description": "Prazo em dias para atendimento de solicitações de titulares LGPD (padrão 15)."
         }
       },
       "required": [
@@ -141,6 +145,10 @@
         "consentimentoEm": {
           "type": "string",
           "format": "date-time"
+        },
+        "semContatoWhatsapp": {
+          "type": "boolean",
+          "description": "Indica opt-out registrado para não enviar mensagens pelo WhatsApp sem apagar o histórico de consentimento."
         },
         "limiteCredito": {
           "type": "integer"
@@ -460,6 +468,97 @@
         }
       },
       "required": ["comercioId", "quem", "acao", "detalhes", "quando"]
+    },
+    "ConsentimentoEvento": {
+      "title": "ConsentimentoEvento",
+      "description": "Registro imutável de consentimento ou opt-out de mensagens por cliente (RF17 / RN12).",
+      "type": "object",
+      "properties": {
+        "comercioId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "clienteId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "tipo": {
+          "type": "string",
+          "enum": ["consentimento", "opt_out"]
+        },
+        "dataHora": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "canal": {
+          "type": "string",
+          "enum": ["cadastro", "whatsapp", "balcao", "link_consulta"]
+        },
+        "responsavel": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "origem": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160
+        }
+      },
+      "required": ["comercioId", "clienteId", "tipo", "dataHora", "canal", "responsavel", "origem"]
+    },
+    "SolicitacaoTitular": {
+      "title": "SolicitacaoTitular",
+      "description": "Registro de solicitação de direito do titular LGPD (RF19).",
+      "type": "object",
+      "properties": {
+        "comercioId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "clienteId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "tipo": {
+          "type": "string",
+          "enum": ["acesso", "correcao", "portabilidade", "exclusao"]
+        },
+        "dataAbertura": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "prazoEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["aberta", "atendida"]
+        },
+        "responsavel": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "observacao": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "concluidaPor": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "dataConclusao": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["comercioId", "clienteId", "tipo", "dataAbertura", "prazoEm", "status", "responsavel", "observacao"]
     }
   },
   "firestore": {
@@ -494,6 +593,14 @@
     "/auditoria/{auditoriaId}": {
       "schema": { "$ref": "#/entities/Auditoria" },
       "description": "Log imutável de auditoria operacional."
+    },
+    "/consentimentos/{consentimentoId}": {
+      "schema": { "$ref": "#/entities/ConsentimentoEvento" },
+      "description": "Histórico imutável de consentimentos e opt-out por cliente."
+    },
+    "/solicitacoesTitular/{solicitacaoId}": {
+      "schema": { "$ref": "#/entities/SolicitacaoTitular" },
+      "description": "Solicitações LGPD de direitos do titular por cliente."
     }
   }
 }

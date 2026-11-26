@@ -26,6 +26,8 @@ export interface ComprovanteDados {
   numero?: string;
   registradoPorNome: string;
   offline: boolean;
+  podeEnviarWhatsApp?: boolean;
+  motivoBloqueioWhatsApp?: string;
 }
 
 interface ComprovanteCardProps {
@@ -252,15 +254,32 @@ export const ComprovanteCard: React.FC<ComprovanteCardProps> = ({ dados, acoesEx
 
       <div className="no-print space-y-3">
         {dados.clienteWhatsapp && dados.clienteWhatsapp !== 'ANONIMIZADO' && (
-          <a
-            href={buildWhatsAppUrl(dados.clienteWhatsapp, msgWhats)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#15803D] px-5 py-3 text-base font-semibold text-white hover:bg-[#166534]"
-          >
-            <MessageCircle className="h-5 w-5" />
-            <span>Enviar por WhatsApp</span>
-          </a>
+          dados.podeEnviarWhatsApp === false ? (
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                disabled
+                className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-slate-100 px-5 py-3 text-base font-semibold text-slate-500 cursor-not-allowed"
+              >
+                <MessageCircle className="h-5 w-5" />
+                <span>Enviar por WhatsApp</span>
+              </button>
+              <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                {dados.motivoBloqueioWhatsApp ||
+                  'Envio bloqueado: cliente sem consentimento ou com opt-out registrado.'}
+              </p>
+            </div>
+          ) : (
+            <a
+              href={buildWhatsAppUrl(dados.clienteWhatsapp, msgWhats)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#15803D] px-5 py-3 text-base font-semibold text-white hover:bg-[#166534]"
+            >
+              <MessageCircle className="h-5 w-5" />
+              <span>Enviar por WhatsApp</span>
+            </a>
+          )
         )}
 
         <div className="grid grid-cols-2 gap-3">

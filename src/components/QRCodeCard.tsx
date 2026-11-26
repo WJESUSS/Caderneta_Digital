@@ -10,6 +10,7 @@ interface QRCodeCardProps {
   filenamePng?: string;
   mostrarBotaoImprimir?: boolean;
   extraWhatsAppUrl?: string;
+  whatsAppBloqueadoMotivo?: string;
 }
 
 export const QRCodeCard: React.FC<QRCodeCardProps> = ({
@@ -20,6 +21,7 @@ export const QRCodeCard: React.FC<QRCodeCardProps> = ({
   filenamePng = 'caderneta-digital-qr.png',
   mostrarBotaoImprimir = false,
   extraWhatsAppUrl,
+  whatsAppBloqueadoMotivo,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [copiado, setCopiado] = useState(false);
@@ -131,7 +133,7 @@ export const QRCodeCard: React.FC<QRCodeCardProps> = ({
           <span>{copiado ? 'Link copiado' : 'Copiar link'}</span>
         </button>
 
-        {extraWhatsAppUrl && (
+        {extraWhatsAppUrl ? (
           <a
             href={extraWhatsAppUrl}
             target="_blank"
@@ -140,8 +142,22 @@ export const QRCodeCard: React.FC<QRCodeCardProps> = ({
           >
             <span>Enviar por WhatsApp</span>
           </a>
-        )}
+        ) : whatsAppBloqueadoMotivo ? (
+          <button
+            type="button"
+            disabled
+            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-slate-100 px-5 py-3 text-base font-semibold text-slate-500 cursor-not-allowed"
+          >
+            <span>Enviar por WhatsApp</span>
+          </button>
+        ) : null}
       </div>
+
+      {!extraWhatsAppUrl && whatsAppBloqueadoMotivo && (
+        <p className="no-print mt-3 w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 text-center">
+          {whatsAppBloqueadoMotivo}
+        </p>
+      )}
 
       <span className="sr-only">{titulo}</span>
     </div>

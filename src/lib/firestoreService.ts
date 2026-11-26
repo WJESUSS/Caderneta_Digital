@@ -20,6 +20,7 @@ import {
 } from 'firebase/auth';
 import { createSecondaryAuthApp, db, handleFirestoreError, OperationType } from './firebase';
 import {
+  calcularDataPrazoSolicitacao,
   calcularVencimentoCompra,
   formatarNumeroLancamento,
   formatCentavos,
@@ -28,13 +29,17 @@ import {
   recalcularCarteiraCliente,
   validarCompra,
   validarPagamento,
+  type CanalConsentimento,
   type Cliente,
   type Comercio,
+  type ConsentimentoEvento,
   type FormaPagamento,
   type Lancamento,
   type LancamentoCalcInput,
   type LinkConsulta,
   type ResumoPublicoCliente,
+  type SolicitacaoTitular,
+  type TipoSolicitacaoTitular,
   type Usuario,
 } from './businessRules';
 import { validarChavePix } from './pix';
@@ -109,6 +114,7 @@ export async function criarComercioEDono(params: {
     pixRecebedor: params.nomeComercio.trim().slice(0, 60),
     whatsappContato: '',
     ultimoNumeroLancamento: 0,
+    prazoSolicitacaoTitularDias: 15,
     criadoEm: serverTimestamp(),
   });
 
@@ -166,6 +172,7 @@ export function observarComercio(
         pixRecebedor: String(d.pixRecebedor ?? ''),
         whatsappContato: String(d.whatsappContato ?? ''),
         ultimoNumeroLancamento: Number(d.ultimoNumeroLancamento ?? 0),
+        prazoSolicitacaoTitularDias: Number(d.prazoSolicitacaoTitularDias ?? 15),
       });
     },
     (err) => {
@@ -197,6 +204,7 @@ export function observarClientes(
             whatsapp: String(d.whatsapp),
             consentimentoWhatsapp: Boolean(d.consentimentoWhatsapp),
             consentimentoEm: toDate(d.consentimentoEm),
+            semContatoWhatsapp: Boolean(d.semContatoWhatsapp ?? false),
             limiteCredito: Number(d.limiteCredito ?? 0),
             diaVencimento: Number(d.diaVencimento ?? 10),
             ativo: Boolean(d.ativo),
@@ -365,6 +373,7 @@ export async function cadastrarCliente(params: {
     whatsapp: e164,
     consentimentoWhatsapp: true,
     consentimentoEm: serverTimestamp(),
+    semContatoWhatsapp: false,
     limiteCredito: Math.max(0, Math.round(params.limiteCreditoCentavos)),
     diaVencimento: dia,
     ativo: true,
@@ -376,6 +385,16 @@ export async function cadastrarCliente(params: {
     observacaoDono: '',
     criadoEm: serverTimestamp(),
     atualizadoEm: serverTimestamp(),
+  });
+
+  batch.set(doc(db, 'consentimentos', makeDocId('cns')), {
+    comercioId: params.comercioId,
+    clienteId,
+    tipo: 'consentimento',
+    dataHora: serverTimestamp(),
+    canal: 'cadastro',
+    responsavel: params.uid,
+    origem: 'Consentimento coletado no cadastro do cliente',
   });
 
   batch.set(doc(db, 'auditoria', makeDocId('aud')), {
@@ -400,7 +419,8 @@ export async function editarCliente(params: {
   perfil: 'dono' | 'atendente';
   nome: string;
   whatsappInput: string;
-  consentimentoWhatsapp: boolean;
+  consentimentoWhatsapp?: boolean;
+  consentimentoAnterior?: boolean;
   limiteCreditoCentavos: number;
   diaVencimento: number;
   ativo?: boolean;
@@ -425,18 +445,32 @@ export async function editarCliente(params: {
   const batch = writeBatch(db);
   const clienteRef = doc(db, 'clientes', params.clienteId);
 
+  // RN06 / RNF06: Atendente só edita nome e whatsapp; diaVencimento e consentimento são exclusivos do Dono
   const payload: Record<string, unknown> = {
     nome: params.nome.trim(),
     whatsapp: e164,
-    consentimentoWhatsapp: params.consentimentoWhatsapp,
-    diaVencimento: dia,
     atualizadoEm: serverTimestamp(),
   };
 
   if (params.perfil === 'dono') {
+    payload.diaVencimento = dia;
     payload.limiteCredito = Math.max(0, Math.round(params.limiteCreditoCentavos));
     if (typeof params.ativo === 'boolean') {
       payload.ativo = params.ativo;
+    }
+    if (params.consentimentoWhatsapp && !params.consentimentoAnterior) {
+      payload.consentimentoWhatsapp = true;
+      payload.consentimentoEm = serverTimestamp();
+      payload.semContatoWhatsapp = false;
+      batch.set(doc(db, 'consentimentos', makeDocId('cns')), {
+        comercioId: params.comercioId,
+        clienteId: params.clienteId,
+        tipo: 'consentimento',
+        dataHora: serverTimestamp(),
+        canal: 'cadastro',
+        responsavel: params.uid,
+        origem: 'Consentimento registrado pelo Dono na edição do cliente',
+      });
     }
   }
 
@@ -472,6 +506,257 @@ export async function editarCliente(params: {
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `clientes/${params.clienteId}`);
   }
+}
+
+export function observarConsentimentosCliente(
+  comercioId: string,
+  clienteId: string,
+  onData: (eventos: ConsentimentoEvento[]) => void
+): Unsubscribe {
+  const q = query(collection(db, 'consentimentos'), where('comercioId', '==', comercioId));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: ConsentimentoEvento[] = snap.docs
+        .filter((d) => d.data().clienteId === clienteId)
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            comercioId: String(data.comercioId),
+            clienteId: String(data.clienteId),
+            tipo: (data.tipo === 'opt_out' ? 'opt_out' : 'consentimento') as ConsentimentoEvento['tipo'],
+            dataHora: toDate(data.dataHora),
+            canal: (data.canal || 'balcao') as CanalConsentimento,
+            responsavel: String(data.responsavel ?? ''),
+            origem: String(data.origem ?? ''),
+          };
+        })
+        .sort((a, b) => b.dataHora.getTime() - a.dataHora.getTime());
+      onData(list);
+    },
+    (err) => handleFirestoreError(err, OperationType.LIST, 'consentimentos')
+  );
+}
+
+export async function registrarOptOutWhatsApp(params: {
+  comercioId: string;
+  clienteId: string;
+  clienteNome: string;
+  canal: CanalConsentimento;
+  origem: string;
+  uid: string;
+}): Promise<void> {
+  const origemLimpa = params.origem.trim().slice(0, 160);
+  if (origemLimpa.length < 2) {
+    throw new Error('Informe a origem do pedido de opt-out (mínimo 2 caracteres).');
+  }
+
+  const batch = writeBatch(db);
+  // Mantém consentimentoWhatsapp como estava para preservar histórico; marca semContatoWhatsapp: true
+  batch.update(doc(db, 'clientes', params.clienteId), {
+    semContatoWhatsapp: true,
+    atualizadoEm: serverTimestamp(),
+  });
+  batch.set(doc(db, 'consentimentos', makeDocId('cns')), {
+    comercioId: params.comercioId,
+    clienteId: params.clienteId,
+    tipo: 'opt_out',
+    dataHora: serverTimestamp(),
+    canal: params.canal,
+    responsavel: params.uid,
+    origem: origemLimpa,
+  });
+  batch.set(doc(db, 'auditoria', makeDocId('aud')), {
+    comercioId: params.comercioId,
+    quem: params.uid,
+    acao: 'whatsapp_opt_out',
+    detalhes: `Opt-out de WhatsApp registrado para ${params.clienteNome} via ${params.canal} (${origemLimpa}).`.slice(0, 300),
+    quando: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `consentimentos/${params.clienteId}`);
+  }
+}
+
+export async function registrarNovoConsentimentoWhatsApp(params: {
+  comercioId: string;
+  clienteId: string;
+  clienteNome: string;
+  canal: CanalConsentimento;
+  origem: string;
+  uid: string;
+}): Promise<void> {
+  const origemLimpa = params.origem.trim().slice(0, 160);
+  if (origemLimpa.length < 2) {
+    throw new Error('Informe a origem do novo consentimento.');
+  }
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'clientes', params.clienteId), {
+    consentimentoWhatsapp: true,
+    consentimentoEm: serverTimestamp(),
+    semContatoWhatsapp: false,
+    atualizadoEm: serverTimestamp(),
+  });
+  batch.set(doc(db, 'consentimentos', makeDocId('cns')), {
+    comercioId: params.comercioId,
+    clienteId: params.clienteId,
+    tipo: 'consentimento',
+    dataHora: serverTimestamp(),
+    canal: params.canal,
+    responsavel: params.uid,
+    origem: origemLimpa,
+  });
+  batch.set(doc(db, 'auditoria', makeDocId('aud')), {
+    comercioId: params.comercioId,
+    quem: params.uid,
+    acao: 'whatsapp_consentimento_renovado',
+    detalhes: `Novo consentimento de WhatsApp registrado para ${params.clienteNome} via ${params.canal}.`.slice(0, 300),
+    quando: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `consentimentos/${params.clienteId}`);
+  }
+}
+
+export function observarSolicitacoesTitularCliente(
+  comercioId: string,
+  clienteId: string,
+  onData: (solicitacoes: SolicitacaoTitular[]) => void
+): Unsubscribe {
+  const q = query(collection(db, 'solicitacoesTitular'), where('comercioId', '==', comercioId));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: SolicitacaoTitular[] = snap.docs
+        .filter((d) => d.data().clienteId === clienteId)
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            comercioId: String(data.comercioId),
+            clienteId: String(data.clienteId),
+            tipo: data.tipo as TipoSolicitacaoTitular,
+            dataAbertura: toDate(data.dataAbertura),
+            prazoEm: toDate(data.prazoEm),
+            status: (data.status === 'atendida' ? 'atendida' : 'aberta') as SolicitacaoTitular['status'],
+            responsavel: String(data.responsavel ?? ''),
+            observacao: String(data.observacao ?? ''),
+            concluidaPor: data.concluidaPor ? String(data.concluidaPor) : undefined,
+            dataConclusao: data.dataConclusao ? toDate(data.dataConclusao) : null,
+          };
+        })
+        .sort((a, b) => b.dataAbertura.getTime() - a.dataAbertura.getTime());
+      onData(list);
+    },
+    (err) => handleFirestoreError(err, OperationType.LIST, 'solicitacoesTitular')
+  );
+}
+
+export async function criarSolicitacaoTitular(params: {
+  comercioId: string;
+  clienteId: string;
+  clienteNome: string;
+  tipo: TipoSolicitacaoTitular;
+  observacao: string;
+  diasPrazo?: number;
+  uid: string;
+}): Promise<string> {
+  const solicitacaoId = makeDocId('lgpd');
+  const agora = new Date();
+  const prazoDate = calcularDataPrazoSolicitacao(agora, params.diasPrazo ?? 15);
+  const obs = params.observacao.trim().slice(0, 300);
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'solicitacoesTitular', solicitacaoId), {
+    comercioId: params.comercioId,
+    clienteId: params.clienteId,
+    tipo: params.tipo,
+    dataAbertura: serverTimestamp(),
+    prazoEm: Timestamp.fromDate(prazoDate),
+    status: 'aberta',
+    responsavel: params.uid,
+    observacao: obs,
+    concluidaPor: '',
+  });
+  batch.set(doc(db, 'auditoria', makeDocId('aud')), {
+    comercioId: params.comercioId,
+    quem: params.uid,
+    acao: 'solicitacao_titular_aberta',
+    detalhes: `Solicitação LGPD (${params.tipo}) aberta para ${params.clienteNome}.`.slice(0, 300),
+    quando: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+    return solicitacaoId;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `solicitacoesTitular/${solicitacaoId}`);
+  }
+}
+
+export async function concluirSolicitacaoTitular(params: {
+  comercioId: string;
+  solicitacaoId: string;
+  clienteNome: string;
+  observacao: string;
+  uid: string;
+}): Promise<void> {
+  const obs = params.observacao.trim().slice(0, 300);
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'solicitacoesTitular', params.solicitacaoId), {
+    status: 'atendida',
+    observacao: obs,
+    concluidaPor: params.uid,
+    dataConclusao: serverTimestamp(),
+  });
+  batch.set(doc(db, 'auditoria', makeDocId('aud')), {
+    comercioId: params.comercioId,
+    quem: params.uid,
+    acao: 'solicitacao_titular_atendida',
+    detalhes: `Solicitação LGPD ${params.solicitacaoId} de ${params.clienteNome} concluída.`.slice(0, 300),
+    quando: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `solicitacoesTitular/${params.solicitacaoId}`);
+  }
+}
+
+export async function exportarDadosCliente(comercioId: string, clienteId: string) {
+  const [cliSnap, lncSnap, consSnap, solSnap] = await Promise.all([
+    getDoc(doc(db, 'clientes', clienteId)),
+    getDocs(query(collection(db, 'lancamentos'), where('comercioId', '==', comercioId))),
+    getDocs(query(collection(db, 'consentimentos'), where('comercioId', '==', comercioId))),
+    getDocs(query(collection(db, 'solicitacoesTitular'), where('comercioId', '==', comercioId))),
+  ]);
+
+  if (!cliSnap.exists() || cliSnap.data().comercioId !== comercioId) {
+    throw new Error('Cliente não encontrado neste comércio.');
+  }
+
+  return {
+    exportadoEm: new Date().toISOString(),
+    cliente: { id: cliSnap.id, ...cliSnap.data() },
+    lancamentos: lncSnap.docs
+      .filter((d) => d.data().clienteId === clienteId)
+      .map((d) => ({ id: d.id, ...d.data() })),
+    consentimentos: consSnap.docs
+      .filter((d) => d.data().clienteId === clienteId)
+      .map((d) => ({ id: d.id, ...d.data() })),
+    solicitacoesTitular: solSnap.docs
+      .filter((d) => d.data().clienteId === clienteId)
+      .map((d) => ({ id: d.id, ...d.data() })),
+  };
 }
 
 export async function anonimizarClienteLGPD(params: {
@@ -1248,6 +1533,7 @@ export async function salvarConfigComercio(params: {
   pixChave?: string;
   pixRecebedor?: string;
   whatsappContato?: string;
+  prazoSolicitacaoTitularDias?: number;
   uid: string;
 }): Promise<void> {
   const nomeLimpo = params.nome.trim();
@@ -1280,12 +1566,15 @@ export async function salvarConfigComercio(params: {
     whatsappNorm = e164;
   }
 
+  const prazoDias = Math.max(1, Math.min(90, Math.round(params.prazoSolicitacaoTitularDias ?? 15)));
+
   const payload: Record<string, unknown> = {
     nome: nomeLimpo,
     limitePadrao: Math.max(0, Math.round(params.limitePadraoCentavos)),
     pixChave: pixChaveNorm,
     pixRecebedor: pixRecebedorLimpo || nomeLimpo.slice(0, 60),
     whatsappContato: whatsappNorm,
+    prazoSolicitacaoTitularDias: prazoDias,
   };
   if (params.novoPin4 && /^\d{4}$/.test(params.novoPin4)) {
     const hashed = await hashPin(params.novoPin4);
@@ -1995,6 +2284,7 @@ export async function carregarDadosExemplo(params: {
       whatsapp: item.whatsapp,
       consentimentoWhatsapp: true,
       consentimentoEm: serverTimestamp(),
+      semContatoWhatsapp: false,
       limiteCredito: item.limiteCredito,
       diaVencimento: item.diaVencimento,
       ativo: true,
@@ -2006,6 +2296,16 @@ export async function carregarDadosExemplo(params: {
       observacaoDono: item.observacaoDono,
       criadoEm: serverTimestamp(),
       atualizadoEm: serverTimestamp(),
+    });
+
+    clientesBatch.set(doc(db, 'consentimentos', makeDocId('cns')), {
+      comercioId: params.comercioId,
+      clienteId: cliId,
+      tipo: 'consentimento',
+      dataHora: serverTimestamp(),
+      canal: 'cadastro',
+      responsavel: params.uid,
+      origem: 'Consentimento inicial registrado no cadastro',
     });
 
     for (const c of createdCompras) {

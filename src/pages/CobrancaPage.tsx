@@ -9,6 +9,8 @@ import {
   formatDateBR,
   formatWhatsAppDisplay,
   getBahiaDateString,
+  motivoBloqueioWhatsApp,
+  podeEnviarWhatsApp,
 } from '../lib/businessRules';
 import { carregarDadosExemplo, salvarObservacaoDonoCliente } from '../lib/firestoreService';
 
@@ -269,15 +271,31 @@ export const CobrancaPage: React.FC = () => {
                     </div>
                   </div>
 
-                  <a
-                    href={buildWhatsAppUrl(c.whatsapp, mensagem)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[#15803D] px-5 py-3 text-base font-semibold text-white hover:bg-[#166534] shrink-0"
-                  >
-                    <MessageCircle className="h-5 w-5" />
-                    <span>Conversar no WhatsApp</span>
-                  </a>
+                  {podeEnviarWhatsApp(c) ? (
+                    <a
+                      href={buildWhatsAppUrl(c.whatsapp, mensagem)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[#15803D] px-5 py-3 text-base font-semibold text-white hover:bg-[#166534] shrink-0"
+                    >
+                      <MessageCircle className="h-5 w-5" />
+                      <span>Conversar no WhatsApp</span>
+                    </a>
+                  ) : (
+                    <div className="flex flex-col sm:items-end gap-1.5 shrink-0 max-w-xs">
+                      <button
+                        type="button"
+                        disabled
+                        className="inline-flex min-h-[48px] w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-slate-100 px-5 py-3 text-base font-semibold text-slate-500 cursor-not-allowed"
+                      >
+                        <MessageCircle className="h-5 w-5" />
+                        <span>WhatsApp bloqueado</span>
+                      </button>
+                      <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                        {motivoBloqueioWhatsApp(c)}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Observação do dono (somente Dono edita; Atendente apenas visualiza se houver) */}

@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import {
   formatCentavos,
   formatWhatsAppDisplay,
+  motivoBloqueioWhatsApp,
+  podeEnviarWhatsApp,
   parseBRLToCentavos,
   validarPagamento,
 } from '../lib/businessRules';
@@ -107,6 +109,8 @@ export const ReceberPagamentoPage: React.FC = () => {
           lancamentoId: idempotencyKey,
           registradoPorNome: usuario.nome,
           offline: true,
+          podeEnviarWhatsApp: podeEnviarWhatsApp(clienteSelecionado),
+          motivoBloqueioWhatsApp: motivoBloqueioWhatsApp(clienteSelecionado),
         });
         return;
       }
@@ -137,6 +141,8 @@ export const ReceberPagamentoPage: React.FC = () => {
         numero: res.numero,
         registradoPorNome: usuario.nome,
         offline: false,
+        podeEnviarWhatsApp: podeEnviarWhatsApp(clienteSelecionado),
+        motivoBloqueioWhatsApp: motivoBloqueioWhatsApp(clienteSelecionado),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro ao registrar pagamento.';

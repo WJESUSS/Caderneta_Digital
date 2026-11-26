@@ -74,16 +74,23 @@ describe('Firestore Rules Static Security Assertions (Dirty Dozen)', () => {
     expect(rules).toContain("incoming().tentativasErradas == existing().tentativasErradas + 1");
   });
 
-  it('13. Restricts pixChave, pixRecebedor, whatsappContato and observacaoDono writes strictly to Dono', () => {
-    expect(rules).toContain("'pixChave', 'pixRecebedor', 'whatsappContato'");
+  it('13. Restricts pixChave, pixRecebedor, whatsappContato, observacaoDono, diaVencimento, consentimentoWhatsapp and consentimentoEm writes strictly to Dono', () => {
+    expect(rules).toContain("'pixChave', 'pixRecebedor', 'whatsappContato', 'prazoSolicitacaoTitularDias'");
     expect(rules).toContain("'observacaoDono', 'atualizadoEm'");
-    // Confirma que o bloco do atendente em clientes não inclui limiteCredito nem observacaoDono
+    // Confirma que o bloco de edição cadastral do atendente em clientes permite apenas nome, whatsapp e atualizadoEm
     const atendenteClienteMatch = rules.match(
       /isMembroComercio\(existing\(\)\.comercioId\)\s*&& existing\(\)\.anonimizado == false\s*&& incoming\(\)\.diff\(existing\(\)\)\.affectedKeys\(\)\.hasOnly\(\[([^\]]+)\]\)/
     );
     expect(atendenteClienteMatch).not.toBeNull();
+    expect(atendenteClienteMatch?.[1]).toContain("'nome'");
+    expect(atendenteClienteMatch?.[1]).toContain("'whatsapp'");
     expect(atendenteClienteMatch?.[1]).not.toContain('limiteCredito');
     expect(atendenteClienteMatch?.[1]).not.toContain('observacaoDono');
+    expect(atendenteClienteMatch?.[1]).not.toContain('diaVencimento');
+    expect(atendenteClienteMatch?.[1]).not.toContain('consentimentoWhatsapp');
+    expect(atendenteClienteMatch?.[1]).not.toContain('consentimentoEm');
+    expect(atendenteClienteMatch?.[1]).not.toContain('ativo');
+    expect(atendenteClienteMatch?.[1]).not.toContain('anonimizado');
   });
 
   it('14. Allows membro do comercio to increment ultimoNumeroLancamento and saves numero on lancamentos', () => {
@@ -91,5 +98,20 @@ describe('Firestore Rules Static Security Assertions (Dirty Dozen)', () => {
     expect(rules).toContain("incoming().ultimoNumeroLancamento == existing().ultimoNumeroLancamento + 1");
     expect(rules).toContain("'numero'");
     expect(rules).toContain("data.numero.matches('^#?(CMP|PAG|EST)-\\\\d{4,10}$')");
+  });
+
+  it('15. Allows attendant only opt-out (semContatoWhatsapp == true) and makes consentimentos immutable', () => {
+    expect(rules).toContain("incoming().diff(existing()).affectedKeys().hasOnly([\n              'semContatoWhatsapp', 'atualizadoEm'\n            ])\n            && incoming().semContatoWhatsapp == true");
+    expect(rules).toContain("match /consentimentos/{consentimentoId}");
+    expect(rules).toContain("incoming().tipo == 'opt_out'");
+    expect(rules).toContain("allow update, delete: if false;");
+  });
+
+  it('16. Enforces immutable non-deletable solicitacoesTitular with Dono-only terminal conclusion', () => {
+    expect(rules).toContain("match /solicitacoesTitular/{solicitacaoId}");
+    expect(rules).toContain("existing().status == 'aberta'");
+    expect(rules).toContain("incoming().status == 'atendida'");
+    expect(rules).toContain("isDono(existing().comercioId)");
+    expect(rules).toContain("incoming().dataConclusao == request.time");
   });
 });
