@@ -1,14 +1,23 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { auth } from '../lib/firebase';
 import {
   carregarUsuarioAtual,
+  observarAssinatura,
   observarClientes,
   observarComercio,
   registrarCompra,
   registrarPagamento,
 } from '../lib/firestoreService';
 import type { Cliente, Comercio, Usuario } from '../lib/businessRules';
+import {
+  avaliarUsoPlano,
+  contarClientesAtivos,
+  resolverPlanoComercio,
+  type AssinaturaComercio,
+  type PlanoResolvido,
+  type UsoPlano,
+} from '../lib/planos';
 import { getOfflineQueue, removeFromOfflineQueue } from '../lib/offlineQueue';
 import { useOnlineStatus } from '../hooks/usePWAInstall';
 
@@ -17,6 +26,9 @@ interface AuthContextValue {
   usuario: Usuario | null;
   comercio: Comercio | null;
   clientes: Cliente[];
+  assinatura: AssinaturaComercio | null;
+  planoResolvido: PlanoResolvido;
+  usoPlano: UsoPlano;
   loadingAuth: boolean;
   loadingComercio: boolean;
   needsOnboarding: boolean;
@@ -45,6 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [comercio, setComercio] = useState<Comercio | null>(null);
   const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [assinatura, setAssinatura] = useState<AssinaturaComercio | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [loadingComercio, setLoadingComercio] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -61,6 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUsuario(null);
       setComercio(null);
       setClientes([]);
+      setAssinatura(null);
       setAuthError(null);
       return;
     }
@@ -85,6 +99,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUsuario(null);
         setComercio(null);
         setClientes([]);
+        setAssinatura(null);
         setAuthError(null);
         setLoadingAuth(false);
         return;
@@ -110,6 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!usuario || !usuario.ativo) {
       setComercio(null);
       setClientes([]);
+      setAssinatura(null);
       return;
     }
     const handleSubError = (err: unknown) => {
@@ -118,9 +134,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     const unsubCom = observarComercio(usuario.comercioId, setComercio, handleSubError);
     const unsubCli = observarClientes(usuario.comercioId, setClientes, handleSubError);
+    // Assinatura usa fallback silencioso para Grátis em caso de erro ou documento inexistente
+    const unsubAss = observarAssinatura(usuario.comercioId, setAssinatura);
     return () => {
       unsubCom();
       unsubCli();
+      unsubAss();
     };
   }, [usuario]);
 
@@ -175,6 +194,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [isOnline, usuario, comercio, refreshOfflineQueueCount]);
 
+  const planoResolvido = useMemo(() => resolverPlanoComercio(assinatura), [assinatura]);
+  const clientesAtivosCount = useMemo(() => contarClientesAtivos(clientes), [clientes]);
+  const usoPlano = useMemo(
+    () => avaliarUsoPlano(clientesAtivosCount, planoResolvido),
+    [clientesAtivosCount, planoResolvido]
+  );
+
   const logout = async () => {
     await signOut(auth);
   };
@@ -186,6 +212,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         usuario,
         comercio,
         clientes,
+        assinatura,
+        planoResolvido,
+        usoPlano,
         loadingAuth,
         loadingComercio,
         needsOnboarding: Boolean(firebaseUser && !loadingAuth && !loadingComercio && !usuario && !authError),

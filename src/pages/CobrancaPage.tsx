@@ -13,11 +13,12 @@ import {
   podeEnviarWhatsApp,
 } from '../lib/businessRules';
 import { carregarDadosExemplo, salvarObservacaoDonoCliente } from '../lib/firestoreService';
+import { isErroLimitePlano, verificarPermissaoAdicaoClientes } from '../lib/planos';
 
 type FiltroCobranca = 'todos' | 'mais_15' | 'ate_7';
 
 export const CobrancaPage: React.FC = () => {
-  const { clientes, comercio, usuario } = useAuth();
+  const { clientes, comercio, usuario, usoPlano } = useAuth();
   const isDono = usuario?.perfil === 'dono';
   const [filtro, setFiltro] = useState<FiltroCobranca>('todos');
   const [obsRascunhos, setObsRascunhos] = useState<Record<string, string>>({});
@@ -27,6 +28,7 @@ export const CobrancaPage: React.FC = () => {
   const [carregandoDemo, setCarregandoDemo] = useState(false);
   const [msgDemo, setMsgDemo] = useState<string | null>(null);
   const [erroDemo, setErroDemo] = useState<string | null>(null);
+  const [erroDemoLimite, setErroDemoLimite] = useState(false);
 
   const hojeBahia = getBahiaDateString();
 
@@ -81,6 +83,13 @@ export const CobrancaPage: React.FC = () => {
     if (!comercio || !usuario || !isDono) return;
     setMsgDemo(null);
     setErroDemo(null);
+    setErroDemoLimite(false);
+    const check = verificarPermissaoAdicaoClientes(usoPlano, 1);
+    if (!check.permitido) {
+      setErroDemo(check.mensagem);
+      setErroDemoLimite(true);
+      return;
+    }
     setCarregandoDemo(true);
     try {
       const res = await carregarDadosExemplo({ comercioId: comercio.id, uid: usuario.uid });
@@ -92,6 +101,7 @@ export const CobrancaPage: React.FC = () => {
         setMsgDemo('Todos os clientes de teste já estão cadastrados neste comércio.');
       }
     } catch (err) {
+      setErroDemoLimite(isErroLimitePlano(err));
       setErroDemo(
         err instanceof Error ? err.message : 'Não foi possível adicionar os clientes.'
       );
@@ -173,9 +183,20 @@ export const CobrancaPage: React.FC = () => {
         )}
 
         {erroDemo && (
-          <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
-            {erroDemo}
-          </p>
+          <div
+            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-800"
+            role="alert"
+          >
+            <span>{erroDemo}</span>
+            {erroDemoLimite && (
+              <Link
+                to="/planos"
+                className="inline-flex min-h-[38px] items-center justify-center rounded-lg bg-red-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-red-900 whitespace-nowrap shrink-0"
+              >
+                Ver planos
+              </Link>
+            )}
+          </div>
         )}
       </div>
 

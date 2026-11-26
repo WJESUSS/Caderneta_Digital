@@ -14,6 +14,7 @@ import { ClienteFormPage } from './pages/ClienteFormPage';
 import { ClienteFichaPage } from './pages/ClienteFichaPage';
 import { CobrancaPage } from './pages/CobrancaPage';
 import { ConfiguracoesPage } from './pages/ConfiguracoesPage';
+import { PlanosPage } from './pages/PlanosPage';
 
 const AppRoutes: React.FC = () => {
   const { firebaseUser, usuario, loadingAuth, loadingComercio, needsOnboarding, authError, logout } =
@@ -81,6 +82,7 @@ const AppRoutes: React.FC = () => {
       <Route path="/clientes/:id/editar" element={renderProtected(<ClienteFormPage />)} />
       <Route path="/cobranca" element={renderProtected(<CobrancaPage />)} />
       <Route path="/configuracoes" element={renderProtected(<ConfiguracoesPage />)} />
+      <Route path="/planos" element={renderProtected(<PlanosPage />)} />
 
       {/* Fallback amigável */}
       <Route path="*" element={<Navigate to="/" replace />} />

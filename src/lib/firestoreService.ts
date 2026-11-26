@@ -55,6 +55,15 @@ import {
   verifyPin,
 } from './crypto';
 import { generateIdempotencyKey } from './offlineQueue';
+import {
+  avaliarUsoPlano,
+  contarClientesAtivos,
+  ErroLimitePlano,
+  resolverPlanoComercio,
+  verificarPermissaoAdicaoClientes,
+  type AssinaturaComercio,
+  type PlanoResolvido,
+} from './planos';
 
 function toDate(val: unknown): Date {
   if (val instanceof Timestamp) return val.toDate();
@@ -269,6 +278,76 @@ export function observarClientes(
   );
 }
 
+export function observarAssinatura(
+  comercioId: string,
+  onData: (assinatura: AssinaturaComercio | null) => void
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, 'assinaturas', comercioId),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      const d = snap.data();
+      if (d.plano !== 'basico' && d.plano !== 'pro') {
+        onData(null);
+        return;
+      }
+      onData({
+        plano: d.plano,
+        validoAte: toDate(d.validoAte),
+      });
+    },
+    (err) => {
+      // Erro na leitura de assinatura nunca pode travar o app nem definir authError
+      console.warn('Aviso ao ler assinatura (usando plano Grátis):', err);
+      onData(null);
+    }
+  );
+}
+
+async function carregarPlanoAtualSafe(comercioId: string): Promise<PlanoResolvido> {
+  try {
+    const snap = await getDoc(doc(db, 'assinaturas', comercioId));
+    if (!snap.exists()) {
+      return resolverPlanoComercio(null);
+    }
+    const d = snap.data();
+    return resolverPlanoComercio({
+      plano: d.plano,
+      validoAte: toDate(d.validoAte),
+    });
+  } catch (err) {
+    console.warn('Erro ao consultar assinatura (assumindo plano Grátis):', err);
+    return resolverPlanoComercio(null);
+  }
+}
+
+async function verificarLimitePlanoComercio(
+  comercioId: string,
+  clientesDocs: ReadonlyArray<{ data: () => DocumentData }>,
+  adicionarQtd: number
+): Promise<void> {
+  const planoAtual = await carregarPlanoAtualSafe(comercioId);
+  const clientesAtivos = contarClientesAtivos(
+    clientesDocs.map((d) => ({
+      ativo: Boolean(d.data().ativo),
+      anonimizado: Boolean(d.data().anonimizado),
+    }))
+  );
+  const uso = avaliarUsoPlano(clientesAtivos, planoAtual);
+  const check = verificarPermissaoAdicaoClientes(uso, adicionarQtd);
+  if (!check.permitido) {
+    throw new ErroLimitePlano(
+      check.mensagem || 'Limite de clientes do plano atingido.',
+      uso.planoId,
+      uso.clientesAtivos,
+      uso.limite ?? 0
+    );
+  }
+}
+
 export function observarLancamentosCliente(
   comercioId: string,
   clienteId: string,
@@ -405,6 +484,8 @@ export async function cadastrarCliente(params: {
     throw new Error('Já existe um cliente cadastrado com este número de WhatsApp neste comércio.');
   }
 
+  await verificarLimitePlanoComercio(params.comercioId, dupSnap.docs, 1);
+
   const clienteId = makeDocId('cli');
   const dia = Math.max(1, Math.min(28, Math.round(params.diaVencimento)));
   const batch = writeBatch(db);
@@ -481,6 +562,17 @@ export async function editarCliente(params: {
   const otherDup = dupSnap.docs.find((d) => d.id !== params.clienteId && d.data().whatsapp === e164);
   if (otherDup) {
     throw new Error('Outro cliente já utiliza este WhatsApp neste comércio.');
+  }
+
+  const clienteAtualDoc = dupSnap.docs.find((d) => d.id === params.clienteId);
+  const estaReativandoInativo =
+    params.perfil === 'dono' &&
+    params.ativo === true &&
+    Boolean(clienteAtualDoc) &&
+    clienteAtualDoc?.data().ativo === false &&
+    clienteAtualDoc?.data().anonimizado === false;
+  if (estaReativandoInativo) {
+    await verificarLimitePlanoComercio(params.comercioId, dupSnap.docs, 1);
   }
 
   const dia = Math.max(1, Math.min(28, Math.round(params.diaVencimento)));
@@ -2582,6 +2674,8 @@ export async function carregarDadosExemplo(params: {
   if (pendentes.length === 0) {
     return { adicionados: 0, ignorados: ficticios.length };
   }
+
+  await verificarLimitePlanoComercio(params.comercioId, existentes.docs, pendentes.length);
 
   const comRef = doc(db, 'comercios', params.comercioId);
   const comSnap = await getDoc(comRef);

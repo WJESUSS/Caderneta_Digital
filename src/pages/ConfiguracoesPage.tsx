@@ -1,9 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { Download, QrCode, ShieldAlert, Sparkles, UserPlus } from 'lucide-react';
+import { CreditCard, Download, QrCode, ShieldAlert, Sparkles, UserPlus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { maskWhatsAppInput, parseBRLToCentavos, type Usuario } from '../lib/businessRules';
 import { validarChavePix } from '../lib/pix';
+import {
+  formatValidadePlanoBR,
+  isErroLimitePlano,
+  verificarPermissaoAdicaoClientes,
+} from '../lib/planos';
 import {
   alternarAtendenteAtivo,
   anonimizarClienteLGPD,
@@ -16,7 +21,7 @@ import {
 import { PWAInstallButton } from '../components/PWAInstallBanner';
 
 export const ConfiguracoesPage: React.FC = () => {
-  const { usuario, comercio, clientes } = useAuth();
+  const { usuario, comercio, clientes, planoResolvido, usoPlano } = useAuth();
   const [nomeComercio, setNomeComercio] = useState('');
   const [limiteStr, setLimiteStr] = useState('');
   const [novoPin, setNovoPin] = useState('');
@@ -42,6 +47,7 @@ export const ConfiguracoesPage: React.FC = () => {
   const [carregandoDemo, setCarregandoDemo] = useState(false);
   const [msgDemo, setMsgDemo] = useState<string | null>(null);
   const [erroDemo, setErroDemo] = useState<string | null>(null);
+  const [erroDemoLimite, setErroDemoLimite] = useState(false);
 
   useEffect(() => {
     if (comercio) {
@@ -179,7 +185,42 @@ export const ConfiguracoesPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-[#14211E]">Configurações do comércio</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-[#14211E]">Configurações do comércio</h1>
+        <Link
+          to="/planos"
+          className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-white px-4 py-2 text-sm font-semibold text-[#14211E] hover:bg-slate-50 shrink-0"
+        >
+          <CreditCard className="h-4 w-4 text-teal-700" />
+          <span>Planos e assinatura</span>
+        </Link>
+      </div>
+
+      {/* Resumo rápido do plano com acesso para /planos */}
+      <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-[#E4E4DF] bg-white p-5 sm:p-6">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-bold text-[#14211E]">
+              Plano atual: {planoResolvido.plano.nome}
+            </h2>
+            <span className="font-mono-nums text-sm font-semibold text-teal-800">
+              ({planoResolvido.plano.precoFormatado})
+            </span>
+          </div>
+          <p className="text-sm text-slate-600">
+            Uso atual: <strong className="font-mono-nums text-[#14211E]">{usoPlano.textoUso}</strong>
+            {planoResolvido.assinaturaAtiva && planoResolvido.validoAte
+              ? ` · Válido até ${formatValidadePlanoBR(planoResolvido.validoAte)}`
+              : ''}
+          </p>
+        </div>
+        <Link
+          to="/planos"
+          className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-teal-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-800 whitespace-nowrap shrink-0"
+        >
+          <span>Ver planos</span>
+        </Link>
+      </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Dados do comércio & PIN */}
@@ -451,6 +492,13 @@ export const ConfiguracoesPage: React.FC = () => {
                 onClick={async () => {
                   setMsgDemo(null);
                   setErroDemo(null);
+                  setErroDemoLimite(false);
+                  const check = verificarPermissaoAdicaoClientes(usoPlano, 1);
+                  if (!check.permitido) {
+                    setErroDemo(check.mensagem);
+                    setErroDemoLimite(true);
+                    return;
+                  }
                   setCarregandoDemo(true);
                   try {
                     const res = await carregarDadosExemplo({
@@ -465,6 +513,7 @@ export const ConfiguracoesPage: React.FC = () => {
                       setMsgDemo('Todos os clientes de teste já foram adicionados neste comércio.');
                     }
                   } catch (err) {
+                    setErroDemoLimite(isErroLimitePlano(err));
                     setErroDemo(
                       err instanceof Error
                         ? err.message
@@ -488,9 +537,20 @@ export const ConfiguracoesPage: React.FC = () => {
                 <p className="rounded-xl bg-teal-50 p-3 text-sm text-teal-900">{msgDemo}</p>
               )}
               {erroDemo && (
-                <p className="rounded-xl bg-red-50 p-3 text-sm text-red-800" role="alert">
-                  {erroDemo}
-                </p>
+                <div
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-red-50 p-3 text-sm text-red-800"
+                  role="alert"
+                >
+                  <span>{erroDemo}</span>
+                  {erroDemoLimite && (
+                    <Link
+                      to="/planos"
+                      className="inline-flex min-h-[38px] items-center justify-center rounded-lg bg-red-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-red-900 whitespace-nowrap shrink-0"
+                    >
+                      Ver planos
+                    </Link>
+                  )}
+                </div>
               )}
             </div>
           </div>

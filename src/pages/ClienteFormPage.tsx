@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -9,6 +9,7 @@ import {
   parseBRLToCentavos,
 } from '../lib/businessRules';
 import { cadastrarCliente, editarCliente } from '../lib/firestoreService';
+import { isErroLimitePlano, verificarPermissaoAdicaoClientes } from '../lib/planos';
 
 function formatarErroCliente(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
@@ -32,7 +33,7 @@ function formatarErroCliente(err: unknown): string {
 export const ClienteFormPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
-  const { clientes, comercio, usuario } = useAuth();
+  const { clientes, comercio, usuario, usoPlano } = useAuth();
   const navigate = useNavigate();
   const isDono = usuario?.perfil === 'dono';
 
@@ -46,6 +47,20 @@ export const ClienteFormPage: React.FC = () => {
   const [ativo, setAtivo] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [erroEhLimite, setErroEhLimite] = useState(false);
+
+  const estaReativandoInativo =
+    isEdit &&
+    isDono &&
+    Boolean(clienteExistente) &&
+    clienteExistente?.ativo === false &&
+    clienteExistente?.anonimizado === false &&
+    ativo === true;
+  const permissaoLimite =
+    !isEdit || estaReativandoInativo
+      ? verificarPermissaoAdicaoClientes(usoPlano, 1)
+      : { permitido: true, mensagem: null };
+  const bloqueadoPorLimite = !permissaoLimite.permitido;
 
   useEffect(() => {
     if (clienteExistente) {
@@ -63,6 +78,16 @@ export const ClienteFormPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro(null);
+    setErroEhLimite(false);
+
+    if (bloqueadoPorLimite) {
+      setErro(
+        permissaoLimite.mensagem ||
+          `Limite do plano ${usoPlano.plano.nome} atingido (${usoPlano.textoUso}).`
+      );
+      setErroEhLimite(true);
+      return;
+    }
 
     if (!usuario || !comercio) {
       setErro(
@@ -117,6 +142,7 @@ export const ClienteFormPage: React.FC = () => {
         navigate(`/clientes/${novoId}`);
       }
     } catch (err) {
+      setErroEhLimite(isErroLimitePlano(err));
       setErro(formatarErroCliente(err));
     } finally {
       setSalvando(false);
@@ -266,15 +292,41 @@ export const ClienteFormPage: React.FC = () => {
           </label>
         )}
 
-        {erro && (
-          <p className="rounded-xl bg-red-50 px-4 py-3 text-base font-medium text-red-800" role="alert">
-            {erro}
-          </p>
+        {bloqueadoPorLimite && (
+          <div
+            role="alert"
+            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900"
+          >
+            <span>{permissaoLimite.mensagem}</span>
+            <Link
+              to="/planos"
+              className="inline-flex min-h-[40px] items-center justify-center rounded-lg bg-red-800 px-4 py-2 text-xs font-semibold text-white hover:bg-red-900 whitespace-nowrap shrink-0"
+            >
+              Ver planos
+            </Link>
+          </div>
+        )}
+
+        {erro && !bloqueadoPorLimite && (
+          <div
+            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-red-50 px-4 py-3 text-base font-medium text-red-800"
+            role="alert"
+          >
+            <span>{erro}</span>
+            {erroEhLimite && (
+              <Link
+                to="/planos"
+                className="inline-flex min-h-[40px] items-center justify-center rounded-lg bg-red-800 px-4 py-2 text-xs font-semibold text-white hover:bg-red-900 whitespace-nowrap shrink-0"
+              >
+                Ver planos
+              </Link>
+            )}
+          </div>
         )}
 
         <button
           type="submit"
-          disabled={salvando}
+          disabled={salvando || bloqueadoPorLimite}
           className="min-h-[52px] w-full rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800 disabled:opacity-50"
         >
           {salvando ? 'Salvando...' : isEdit ? 'Salvar alterações' : 'Cadastrar cliente'}

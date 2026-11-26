@@ -114,4 +114,10 @@ describe('Firestore Rules Static Security Assertions (Dirty Dozen)', () => {
     expect(rules).toContain("isDono(existing().comercioId)");
     expect(rules).toContain("incoming().dataConclusao == request.time");
   });
+
+  it('17. Allows member get on assinaturas/{comercioId} even when missing and blocks all client writes and list', () => {
+    expect(rules).toContain("match /assinaturas/{comercioId}");
+    expect(rules).toContain("allow get: if isValidId(comercioId) && isMembroComercio(comercioId);");
+    expect(rules).toContain("allow create, update, delete: if false;");
+  });
 });

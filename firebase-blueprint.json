@@ -559,6 +559,24 @@
         }
       },
       "required": ["comercioId", "clienteId", "tipo", "dataAbertura", "prazoEm", "status", "responsavel", "observacao"]
+    },
+    "Assinatura": {
+      "title": "Assinatura",
+      "description": "Assinatura de plano pago ativada manualmente pelo administrador no Firebase Console.",
+      "type": "object",
+      "properties": {
+        "plano": {
+          "type": "string",
+          "enum": ["basico", "pro"],
+          "description": "Identificador do plano pago ativo."
+        },
+        "validoAte": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data/hora de expiração da assinatura."
+        }
+      },
+      "required": ["plano", "validoAte"]
     }
   },
   "firestore": {
@@ -601,6 +619,10 @@
     "/solicitacoesTitular/{solicitacaoId}": {
       "schema": { "$ref": "#/entities/SolicitacaoTitular" },
       "description": "Solicitações LGPD de direitos do titular por cliente."
+    },
+    "/assinaturas/{comercioId}": {
+      "schema": { "$ref": "#/entities/Assinatura" },
+      "description": "Plano pago vigente do comércio (somente leitura para membros; ativado manualmente no Console)."
     }
   }
 }

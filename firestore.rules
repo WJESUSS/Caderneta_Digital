@@ -530,5 +530,11 @@ service cloud.firestore {
         ]);
       allow delete: if false;
     }
+
+    match /assinaturas/{comercioId} {
+      allow get: if isValidId(comercioId) && isMembroComercio(comercioId);
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
   }
 }

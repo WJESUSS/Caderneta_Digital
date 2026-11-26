@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, ChevronRight, Search, Sparkles, UserPlus } from 'lucide-react';
+import { AlertCircle, ChevronRight, CreditCard, Search, Sparkles, UserPlus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
   estaPertoDoLimite,
@@ -9,22 +9,33 @@ import {
   formatWhatsAppDisplay,
 } from '../lib/businessRules';
 import { carregarDadosExemplo } from '../lib/firestoreService';
+import { isErroLimitePlano, verificarPermissaoAdicaoClientes } from '../lib/planos';
 
 type Filtro = 'todos' | 'devedores' | 'perto_limite' | 'vencidos' | 'quitados';
 
 export const ClientesPage: React.FC = () => {
-  const { clientes, comercio, usuario } = useAuth();
+  const { clientes, comercio, usuario, usoPlano } = useAuth();
   const isDono = usuario?.perfil === 'dono';
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<Filtro>('todos');
   const [gerando, setGerando] = useState(false);
   const [msgGeracao, setMsgGeracao] = useState<string | null>(null);
   const [erroGeracao, setErroGeracao] = useState<string | null>(null);
+  const [erroEhLimite, setErroEhLimite] = useState(false);
 
   const handleGerarClientesTeste = async () => {
     if (!comercio || !usuario || !isDono) return;
     setMsgGeracao(null);
     setErroGeracao(null);
+    setErroEhLimite(false);
+
+    const checkLimite = verificarPermissaoAdicaoClientes(usoPlano, 1);
+    if (!checkLimite.permitido) {
+      setErroGeracao(checkLimite.mensagem);
+      setErroEhLimite(true);
+      return;
+    }
+
     setGerando(true);
     try {
       const res = await carregarDadosExemplo({ comercioId: comercio.id, uid: usuario.uid });
@@ -36,12 +47,23 @@ export const ClientesPage: React.FC = () => {
         setMsgGeracao('Todos os clientes de teste já estão cadastrados neste comércio.');
       }
     } catch (err) {
+      setErroEhLimite(isErroLimitePlano(err));
       setErroGeracao(
         err instanceof Error ? err.message : 'Não foi possível adicionar os clientes na caderneta.'
       );
     } finally {
       setGerando(false);
     }
+  };
+
+  const handleBloqueioNovoCliente = () => {
+    const check = verificarPermissaoAdicaoClientes(usoPlano, 1);
+    setMsgGeracao(null);
+    setErroGeracao(
+      check.mensagem ||
+        `Limite do plano ${usoPlano.plano.nome} atingido (${usoPlano.textoUso}).`
+    );
+    setErroEhLimite(true);
   };
 
   const lista = useMemo(() => {
@@ -69,7 +91,18 @@ export const ClientesPage: React.FC = () => {
   return (
     <div className="space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold text-[#14211E]">Clientes</h1>
+        <div className="flex flex-wrap items-baseline gap-3">
+          <h1 className="text-2xl font-bold text-[#14211E]">Clientes</h1>
+          <Link
+            to="/planos"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#D4D4CE] bg-white px-3 py-1.5 text-sm font-semibold text-[#14211E] hover:bg-slate-50"
+          >
+            <CreditCard className="h-4 w-4 text-teal-700" />
+            <span>
+              Plano {usoPlano.plano.nome} · <span className="font-mono-nums">{usoPlano.textoUso}</span>
+            </span>
+          </Link>
+        </div>
         <div className="flex flex-wrap items-center gap-2.5">
           {isDono && (
             <button
@@ -82,15 +115,69 @@ export const ClientesPage: React.FC = () => {
               <span>{gerando ? 'Adicionando...' : 'Inserir clientes com vencidos'}</span>
             </button>
           )}
-          <Link
-            to="/clientes/novo"
-            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
-          >
-            <UserPlus className="h-5 w-5" />
-            <span>Cadastrar cliente</span>
-          </Link>
+          {usoPlano.noLimite ? (
+            <button
+              type="button"
+              onClick={handleBloqueioNovoCliente}
+              className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-[#D4D4CE] bg-slate-100 px-5 py-3 text-base font-semibold text-slate-600 hover:bg-slate-200"
+            >
+              <UserPlus className="h-5 w-5" />
+              <span>Cadastrar cliente</span>
+            </button>
+          ) : (
+            <Link
+              to="/clientes/novo"
+              className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-teal-700 px-5 py-3 text-base font-semibold text-white hover:bg-teal-800"
+            >
+              <UserPlus className="h-5 w-5" />
+              <span>Cadastrar cliente</span>
+            </Link>
+          )}
         </div>
       </div>
+
+      {/* Aviso de 80% ou 100% do limite do plano */}
+      {usoPlano.noLimite ? (
+        <div
+          role="status"
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-red-300 bg-red-50 p-4 text-red-950"
+        >
+          <div className="space-y-0.5 text-sm">
+            <p className="font-bold">
+              Limite do plano {usoPlano.plano.nome} atingido ({usoPlano.textoUso})
+            </p>
+            <p className="text-red-900">
+              Novos cadastros e reativações estão bloqueados. Seus clientes atuais continuam funcionando normalmente para compras, pagamentos, cobrança, QR Code e consulta pública.
+            </p>
+          </div>
+          <Link
+            to="/planos"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-xl bg-red-800 px-4 py-2 text-sm font-semibold text-white hover:bg-red-900 whitespace-nowrap shrink-0"
+          >
+            Ver planos
+          </Link>
+        </div>
+      ) : usoPlano.pertoDoLimite ? (
+        <div
+          role="status"
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-950"
+        >
+          <div className="space-y-0.5 text-sm">
+            <p className="font-bold">
+              Você está perto do limite do plano {usoPlano.plano.nome} ({usoPlano.textoUso} · {usoPlano.percentual}%)
+            </p>
+            <p className="text-amber-900">
+              Restam {usoPlano.vagasRestantes} {usoPlano.vagasRestantes === 1 ? 'vaga' : 'vagas'} para novos clientes ativos.
+            </p>
+          </div>
+          <Link
+            to="/planos"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-xl border border-amber-400 bg-white px-4 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-100 whitespace-nowrap shrink-0"
+          >
+            Ver planos
+          </Link>
+        </div>
+      ) : null}
 
       {msgGeracao && (
         <p className="rounded-xl bg-teal-50 px-4 py-3 text-sm font-medium text-teal-900">
@@ -98,9 +185,20 @@ export const ClientesPage: React.FC = () => {
         </p>
       )}
       {erroGeracao && (
-        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
-          {erroGeracao}
-        </p>
+        <div
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-800"
+          role="alert"
+        >
+          <span>{erroGeracao}</span>
+          {erroEhLimite && (
+            <Link
+              to="/planos"
+              className="inline-flex min-h-[40px] items-center justify-center rounded-lg bg-red-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-red-900 whitespace-nowrap shrink-0"
+            >
+              Ver planos
+            </Link>
+          )}
+        </div>
       )}
 
       <div className="rounded-2xl border border-[#E4E4DF] bg-white p-4 sm:p-6 space-y-4">
