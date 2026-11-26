@@ -132,6 +132,8 @@ export interface ResumoPublicoCliente {
   saldoDevedor: number;
   valorVencido: number;
   valorAVencer: number;
+  limiteCredito?: number;
+  limiteDisponivel?: number;
   proximoVencimento: string;
   atualizadoEmIso: string;
   lancamentos: LancamentoResumoPublico[];

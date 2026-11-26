@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   onSnapshot,
   orderBy,
@@ -58,6 +59,41 @@ import { generateIdempotencyKey } from './offlineQueue';
 function toDate(val: unknown): Date {
   if (val instanceof Timestamp) return val.toDate();
   if (val instanceof Date) return val;
+  if (val && typeof val === 'object') {
+    const maybe = val as {
+      toDate?: () => Date;
+      seconds?: number;
+      nanoseconds?: number;
+      _seconds?: number;
+      _nanoseconds?: number;
+    };
+    if (typeof maybe.toDate === 'function') {
+      const d = maybe.toDate();
+      if (d instanceof Date && !Number.isNaN(d.getTime())) return d;
+    }
+    const secs =
+      typeof maybe.seconds === 'number'
+        ? maybe.seconds
+        : typeof maybe._seconds === 'number'
+        ? maybe._seconds
+        : null;
+    if (secs !== null) {
+      const nanos =
+        typeof maybe.nanoseconds === 'number'
+          ? maybe.nanoseconds
+          : typeof maybe._nanoseconds === 'number'
+          ? maybe._nanoseconds
+          : 0;
+      return new Date(secs * 1000 + Math.floor(nanos / 1_000_000));
+    }
+  }
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    return new Date(val);
+  }
+  if (typeof val === 'string' && val.trim()) {
+    const parsed = new Date(val);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
   return new Date(0);
 }
 
@@ -523,6 +559,53 @@ export async function editarCliente(params: {
       // Melhor esforço caso documento legado não exista em consultasPublicas
     }
   }
+
+  // Re-sincroniza projeções públicas ativas caso nome, telefone ou limite tenham mudado
+  if (params.ativo !== false) {
+    try {
+      const [comSnap, cliSnap, lancs] = await Promise.all([
+        getDoc(doc(db, 'comercios', params.comercioId)),
+        getDoc(clienteRef),
+        fetchClientLancamentos(params.comercioId, params.clienteId),
+      ]);
+      if (cliSnap.exists() && !cliSnap.data().anonimizado && cliSnap.data().ativo) {
+        const cd = cliSnap.data();
+        const calc = recalcularCarteiraCliente(
+          lancs.map((l) => ({
+            id: l.id,
+            tipo: l.tipo,
+            valor: l.valor,
+            vencimento: l.vencimento,
+            estornoDe: l.estornoDe,
+            criadoEmMs: l.criadoEmMs,
+          })),
+          getBahiaDateString()
+        );
+        await sincronizarConsultasPublicasCliente({
+          comercioId: params.comercioId,
+          comercioNome: comSnap.exists() ? String(comSnap.data().nome ?? 'Comércio') : 'Comércio',
+          pixChave: comSnap.exists() ? String(comSnap.data().pixChave ?? '') : '',
+          pixRecebedor: comSnap.exists() ? String(comSnap.data().pixRecebedor ?? '') : '',
+          comercioWhatsapp: comSnap.exists() ? String(comSnap.data().whatsappContato ?? '') : '',
+          clienteId: params.clienteId,
+          clienteNome: String(cd.nome),
+          clienteWhatsapp: String(cd.whatsapp),
+          saldoDevedor: calc.saldoDevedor,
+          valorVencido: calc.valorVencido,
+          valorAVencer: calc.valorAVencer,
+          limiteCredito: Number(cd.limiteCredito ?? 0),
+          proximoVencimento: calc.proximoVencimento,
+          lancamentos: lancs,
+          estornadosIds: calc.estornadosIds,
+          comprasAtualizadas: calc.comprasAtualizadas,
+          rawLancamentosDocs: lancs,
+          atualizarUltimos4Hash: true,
+        });
+      }
+    } catch (syncErr) {
+      console.warn('Aviso ao sincronizar link público após editar cliente:', syncErr);
+    }
+  }
 }
 
 export function observarConsentimentosCliente(
@@ -909,6 +992,7 @@ async function sincronizarConsultasPublicasCliente(params: {
   saldoDevedor: number;
   valorVencido: number;
   valorAVencer: number;
+  limiteCredito?: number;
   proximoVencimento: string;
   lancamentos: LancamentoCalcInput[];
   estornadosIds: Set<string>;
@@ -923,8 +1007,12 @@ async function sincronizarConsultasPublicasCliente(params: {
     vencimento: string;
     criadoEmMs: number;
   }>;
+  atualizarUltimos4Hash?: boolean;
 }): Promise<void> {
   if (!params.clienteWhatsapp || params.clienteWhatsapp === 'ANONIMIZADO') return;
+
+  const last4 = params.clienteWhatsapp.replace(/\D/g, '').slice(-4);
+  if (!/^\d{4}$/.test(last4)) return;
 
   const linksSnap = await getDocs(
     query(
@@ -933,8 +1021,12 @@ async function sincronizarConsultasPublicasCliente(params: {
     )
   );
 
+  const agoraMs = Date.now();
   const activeLinks = linksSnap.docs.filter(
-    (d) => d.data().clienteId === params.clienteId && !d.data().revogado
+    (d) =>
+      d.data().clienteId === params.clienteId &&
+      !d.data().revogado &&
+      toDate(d.data().expiraEm).getTime() > agoraMs
   );
   if (activeLinks.length === 0) return;
 
@@ -951,13 +1043,17 @@ async function sincronizarConsultasPublicasCliente(params: {
     }
   }
 
-  const last4 = params.clienteWhatsapp.slice(-4);
   const primeiroNome = params.clienteNome.trim().split(/\s+/)[0] || 'Cliente';
   const comercioNomeRaw = params.comercioNome.trim().slice(0, 80);
   const comercioNomeSeguro = comercioNomeRaw.length >= 2 ? comercioNomeRaw : 'Comércio';
   const ordenados = params.rawLancamentosDocs
     .slice()
     .sort((a, b) => b.criadoEmMs - a.criadoEmMs);
+
+  const limiteCreditoVal =
+    typeof params.limiteCredito === 'number' ? Math.max(0, Math.round(params.limiteCredito)) : undefined;
+  const limiteDisponivelVal =
+    limiteCreditoVal !== undefined ? Math.max(0, limiteCreditoVal - params.saldoDevedor) : undefined;
 
   const buildSummaryJson = (limiteItens: number) => {
     const resumo: ResumoPublicoCliente = {
@@ -966,6 +1062,8 @@ async function sincronizarConsultasPublicasCliente(params: {
       saldoDevedor: params.saldoDevedor,
       valorVencido: params.valorVencido,
       valorAVencer: params.valorAVencer,
+      ...(limiteCreditoVal !== undefined ? { limiteCredito: limiteCreditoVal } : {}),
+      ...(limiteDisponivelVal !== undefined ? { limiteDisponivel: limiteDisponivelVal } : {}),
       proximoVencimento: params.proximoVencimento,
       atualizadoEmIso: new Date().toISOString(),
       pixChave: pixChave || '',
@@ -998,13 +1096,17 @@ async function sincronizarConsultasPublicasCliente(params: {
       );
       if (enc.length <= 30000) break;
     }
+    const updateData: Record<string, unknown> = {
+      comercioNome: comercioNomeSeguro,
+      payloadCifrado: enc,
+      atualizadoEm: serverTimestamp(),
+    };
+    if (params.atualizarUltimos4Hash) {
+      updateData.ultimos4Hash = await sha256Hex(`${tokenHash}:${last4}`);
+    }
     try {
       await writeBatch(db)
-        .update(doc(db, 'consultasPublicas', tokenHash), {
-          comercioNome: comercioNomeSeguro,
-          payloadCifrado: enc,
-          atualizadoEm: serverTimestamp(),
-        })
+        .update(doc(db, 'consultasPublicas', tokenHash), updateData)
         .commit();
     } catch {
       // Melhor esforço individual caso exista link legado sem projeção pública
@@ -1201,6 +1303,7 @@ export async function registrarCompra(params: {
         saldoDevedor: resultadoCarteiraFinal.saldoDevedor,
         valorVencido: resultadoCarteiraFinal.valorVencido,
         valorAVencer: resultadoCarteiraFinal.valorAVencer,
+        limiteCredito: limiteCreditoCliente,
         proximoVencimento: resultadoCarteiraFinal.proximoVencimento,
         lancamentos: [...existingLancamentos, novoLancamentoCalc],
         estornadosIds: resultadoCarteiraFinal.estornadosIds,
@@ -1389,6 +1492,7 @@ export async function registrarPagamento(params: {
         saldoDevedor: resultadoCarteiraFinal.saldoDevedor,
         valorVencido: resultadoCarteiraFinal.valorVencido,
         valorAVencer: resultadoCarteiraFinal.valorAVencer,
+        limiteCredito: limiteCreditoCliente,
         proximoVencimento: resultadoCarteiraFinal.proximoVencimento,
         lancamentos: [...existingLancamentos, novoLancamentoCalc],
         estornadosIds: resultadoCarteiraFinal.estornadosIds,
@@ -1560,6 +1664,7 @@ export async function estornarLancamento(params: {
       saldoDevedor: resultadoCarteiraFinal.saldoDevedor,
       valorVencido: resultadoCarteiraFinal.valorVencido,
       valorAVencer: resultadoCarteiraFinal.valorAVencer,
+      limiteCredito: limiteCreditoCliente,
       proximoVencimento: resultadoCarteiraFinal.proximoVencimento,
       lancamentos: [...existingLancamentos, estornoCalc],
       estornadosIds: resultadoCarteiraFinal.estornadosIds,
@@ -1753,6 +1858,7 @@ export async function salvarConfigComercio(params: {
         saldoDevedor: calc.saldoDevedor,
         valorVencido: calc.valorVencido,
         valorAVencer: calc.valorAVencer,
+        limiteCredito: Number(cd.limiteCredito ?? 0),
         proximoVencimento: calc.proximoVencimento,
         lancamentos: cliLancs,
         estornadosIds: calc.estornadosIds,
@@ -1798,6 +1904,49 @@ export async function ajustarLimiteCliente(params: {
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `clientes/${params.clienteId}`);
+  }
+
+  try {
+    const [comSnap, cliSnap, lancs] = await Promise.all([
+      getDoc(doc(db, 'comercios', params.comercioId)),
+      getDoc(doc(db, 'clientes', params.clienteId)),
+      fetchClientLancamentos(params.comercioId, params.clienteId),
+    ]);
+    if (cliSnap.exists() && !cliSnap.data().anonimizado && cliSnap.data().ativo) {
+      const cd = cliSnap.data();
+      const calc = recalcularCarteiraCliente(
+        lancs.map((l) => ({
+          id: l.id,
+          tipo: l.tipo,
+          valor: l.valor,
+          vencimento: l.vencimento,
+          estornoDe: l.estornoDe,
+          criadoEmMs: l.criadoEmMs,
+        })),
+        getBahiaDateString()
+      );
+      await sincronizarConsultasPublicasCliente({
+        comercioId: params.comercioId,
+        comercioNome: comSnap.exists() ? String(comSnap.data().nome ?? 'Comércio') : 'Comércio',
+        pixChave: comSnap.exists() ? String(comSnap.data().pixChave ?? '') : '',
+        pixRecebedor: comSnap.exists() ? String(comSnap.data().pixRecebedor ?? '') : '',
+        comercioWhatsapp: comSnap.exists() ? String(comSnap.data().whatsappContato ?? '') : '',
+        clienteId: params.clienteId,
+        clienteNome: String(cd.nome),
+        clienteWhatsapp: String(cd.whatsapp),
+        saldoDevedor: calc.saldoDevedor,
+        valorVencido: calc.valorVencido,
+        valorAVencer: calc.valorAVencer,
+        limiteCredito: novoLimite,
+        proximoVencimento: calc.proximoVencimento,
+        lancamentos: lancs,
+        estornadosIds: calc.estornadosIds,
+        comprasAtualizadas: calc.comprasAtualizadas,
+        rawLancamentosDocs: lancs,
+      });
+    }
+  } catch (syncErr) {
+    console.warn('Aviso ao sincronizar link público após ajustar limite:', syncErr);
   }
 }
 
@@ -1966,7 +2115,10 @@ export async function gerarLinkConsulta(params: {
   const rawToken = generateRandomTokenHex(32); // 256 bits >= 128 bits
   const tokenHash = await sha256Hex(rawToken);
   const expiraEm = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const last4 = params.cliente.whatsapp.slice(-4);
+  const last4 = params.cliente.whatsapp.replace(/\D/g, '').slice(-4);
+  if (!/^\d{4}$/.test(last4)) {
+    throw new Error('WhatsApp do cliente inválido para gerar link de consulta.');
+  }
   const ultimos4Hash = await sha256Hex(`${tokenHash}:${last4}`);
 
   let pixChave = params.pixChave;
@@ -2001,6 +2153,8 @@ export async function gerarLinkConsulta(params: {
   }));
   const calc = recalcularCarteiraCliente(baseCalc, getBahiaDateString());
   const primeiroNome = params.cliente.nome.trim().split(/\s+/)[0] || 'Cliente';
+  const limiteCreditoVal = Math.max(0, Math.round(params.cliente.limiteCredito));
+  const limiteDisponivelVal = Math.max(0, limiteCreditoVal - calc.saldoDevedor);
 
   const lancamentosOrdenados = params.lancamentos
     .slice()
@@ -2014,6 +2168,8 @@ export async function gerarLinkConsulta(params: {
       saldoDevedor: calc.saldoDevedor,
       valorVencido: calc.valorVencido,
       valorAVencer: calc.valorAVencer,
+      limiteCredito: limiteCreditoVal,
+      limiteDisponivel: limiteDisponivelVal,
       proximoVencimento: calc.proximoVencimento,
       atualizadoEmIso: new Date().toISOString(),
       pixChave: pixChave || '',
@@ -2220,12 +2376,22 @@ export async function consultarSaldoPublicoPorToken(
     // Se estiver offline/cache, segue verificação segura
   }
 
+  const consultaRef = doc(db, 'consultasPublicas', tokenHash);
   let snap;
   try {
-    snap = await getDoc(doc(db, 'consultasPublicas', tokenHash));
-  } catch (err) {
-    console.warn('Consulta pública indisponível ao ler projeção:', err);
-    return { status: 'indisponivel' };
+    snap = await getDocFromServer(consultaRef);
+  } catch (serverErr) {
+    const msg = serverErr instanceof Error ? serverErr.message : String(serverErr);
+    if (msg.includes('permission-denied') || msg.includes('PERMISSION_DENIED') || msg.includes('Missing or insufficient permissions')) {
+      console.warn('Consulta pública indisponível ou bloqueada pelas regras:', serverErr);
+      return { status: 'indisponivel' };
+    }
+    try {
+      snap = await getDoc(consultaRef);
+    } catch (err) {
+      console.warn('Consulta pública indisponível ao ler projeção:', err);
+      return { status: 'indisponivel' };
+    }
   }
 
   if (!snap.exists()) {

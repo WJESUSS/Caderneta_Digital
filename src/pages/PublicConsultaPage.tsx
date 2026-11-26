@@ -236,12 +236,30 @@ export const PublicConsultaPage: React.FC = () => {
                   </div>
                 </div>
 
+                {typeof resumo.limiteDisponivel === 'number' && (
+                  <div className="flex items-center justify-between border-t border-[#ECECE7] pt-3">
+                    <span className="text-sm text-slate-600">Limite disponível</span>
+                    <span className="font-mono-nums text-base font-bold text-teal-800">
+                      {formatCentavos(resumo.limiteDisponivel)}
+                    </span>
+                  </div>
+                )}
+
                 {resumo.proximoVencimento && (
                   <p className="text-base text-slate-700">
                     Próximo vencimento:{' '}
                     <strong className="font-mono-nums">
                       {formatDateBR(resumo.proximoVencimento)}
                     </strong>
+                  </p>
+                )}
+
+                {resumo.atualizadoEmIso && (
+                  <p className="text-xs text-slate-500">
+                    Atualizado em{' '}
+                    {new Date(resumo.atualizadoEmIso).toLocaleString('pt-BR', {
+                      timeZone: 'America/Bahia',
+                    })}
                   </p>
                 )}
               </div>
