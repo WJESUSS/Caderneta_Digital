@@ -1985,22 +1985,24 @@ export async function gerarLinkConsulta(params: {
   const calc = recalcularCarteiraCliente(baseCalc, getBahiaDateString());
   const primeiroNome = params.cliente.nome.trim().split(/\s+/)[0] || 'Cliente';
 
-  const resumo: ResumoPublicoCliente = {
-    comercioNome: comercioNomeSeguro,
-    primeiroNome,
-    saldoDevedor: calc.saldoDevedor,
-    valorVencido: calc.valorVencido,
-    valorAVencer: calc.valorAVencer,
-    proximoVencimento: calc.proximoVencimento,
-    atualizadoEmIso: new Date().toISOString(),
-    pixChave: pixChave || '',
-    pixRecebedor: pixRecebedor || comercioNomeSeguro,
-    comercioWhatsapp: comercioWhatsapp || '',
-    lancamentos: params.lancamentos
-      .slice()
-      .sort((a, b) => b.criadoEm.getTime() - a.criadoEm.getTime())
-      .slice(0, 30)
-      .map((l) => ({
+  const lancamentosOrdenados = params.lancamentos
+    .slice()
+    .sort((a, b) => b.criadoEm.getTime() - a.criadoEm.getTime());
+
+  let payloadCifrado = '';
+  for (const limiteItens of [30, 15, 5, 0]) {
+    const resumo: ResumoPublicoCliente = {
+      comercioNome: comercioNomeSeguro,
+      primeiroNome,
+      saldoDevedor: calc.saldoDevedor,
+      valorVencido: calc.valorVencido,
+      valorAVencer: calc.valorAVencer,
+      proximoVencimento: calc.proximoVencimento,
+      atualizadoEmIso: new Date().toISOString(),
+      pixChave: pixChave || '',
+      pixRecebedor: pixRecebedor || comercioNomeSeguro,
+      comercioWhatsapp: comercioWhatsapp || '',
+      lancamentos: lancamentosOrdenados.slice(0, limiteItens).map((l) => ({
         id: l.id,
         numero: l.numero,
         tipo: l.tipo,
@@ -2012,13 +2014,17 @@ export async function gerarLinkConsulta(params: {
         criadoEmIso: l.criadoEm.toISOString(),
         estornado: calc.estornadosIds.has(l.id),
       })),
-  };
+    };
 
-  const payloadCifrado = await encryptPublicPayload(
-    JSON.stringify(resumo),
-    tokenHash,
-    `${params.comercioId}:${last4}`
-  );
+    payloadCifrado = await encryptPublicPayload(
+      JSON.stringify(resumo),
+      tokenHash,
+      `${params.comercioId}:${last4}`
+    );
+    if (payloadCifrado.length <= 30000) {
+      break;
+    }
+  }
 
   // Busca links anteriores para revogação após criar o novo link
   let prevDocsParaRevogar: QueryDocumentSnapshot<DocumentData>[] = [];
@@ -2036,23 +2042,7 @@ export async function gerarLinkConsulta(params: {
     handleFirestoreError(err, OperationType.LIST, 'linksConsulta');
   }
 
-  try {
-    await writeBatch(db)
-      .set(doc(db, 'linksConsulta', tokenHash), {
-        comercioId: params.comercioId,
-        clienteId: params.cliente.id,
-        expiraEm: Timestamp.fromDate(expiraEm),
-        revogado: false,
-        tentativasErradas: 0,
-        bloqueadoAte: Timestamp.fromMillis(0),
-        criadoPor: params.uid,
-        criadoEm: serverTimestamp(),
-      })
-      .commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `linksConsulta/${tokenHash}`);
-  }
-
+  // Grava consultasPublicas antes de linksConsulta para não deixar link ativo órfão em caso de erro
   try {
     await writeBatch(db)
       .set(doc(db, 'consultasPublicas', tokenHash), {
@@ -2070,7 +2060,28 @@ export async function gerarLinkConsulta(params: {
       })
       .commit();
   } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `consultasPublicas/${tokenHash}`);
+    handleFirestoreError(
+      err,
+      OperationType.CREATE,
+      `consultasPublicas/${tokenHash}?nomeLen=${comercioNomeSeguro.length}&hashLen=${ultimos4Hash.length}&payloadLen=${payloadCifrado.length}`
+    );
+  }
+
+  try {
+    await writeBatch(db)
+      .set(doc(db, 'linksConsulta', tokenHash), {
+        comercioId: params.comercioId,
+        clienteId: params.cliente.id,
+        expiraEm: Timestamp.fromDate(expiraEm),
+        revogado: false,
+        tentativasErradas: 0,
+        bloqueadoAte: Timestamp.fromMillis(0),
+        criadoPor: params.uid,
+        criadoEm: serverTimestamp(),
+      })
+      .commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `linksConsulta/${tokenHash}`);
   }
 
   const audId = makeDocId('aud');
