@@ -50,6 +50,7 @@ import {
   registrarNovoConsentimentoWhatsApp,
   registrarOptOutWhatsApp,
   revogarLinkConsulta,
+  verificarConsultaPublicaDisponivel,
 } from '../lib/firestoreService';
 import { APP_PUBLIC_URL } from '../lib/qrUrl';
 import { QRCodeCard } from '../components/QRCodeCard';
@@ -70,6 +71,7 @@ export const ClienteFichaPage: React.FC = () => {
   const [carregandoExtrato, setCarregandoExtrato] = useState(true);
   const [gerandoLink, setGerandoLink] = useState(false);
   const [tokenAtual, setTokenAtual] = useState<string | null>(null);
+  const [linkPublicoInvalido, setLinkPublicoInvalido] = useState(false);
   const [erroLink, setErroLink] = useState<string | null>(null);
 
   // Modal de estorno (só Dono)
@@ -138,12 +140,23 @@ export const ClienteFichaPage: React.FC = () => {
   }, [links]);
 
   useEffect(() => {
+    let active = true;
     if (linkAtivo && typeof window !== 'undefined') {
       const saved = window.localStorage.getItem(`${LOCAL_TOKEN_PREFIX}${linkAtivo.tokenHash}`);
       setTokenAtual(saved);
+      setLinkPublicoInvalido(false);
+      void verificarConsultaPublicaDisponivel(linkAtivo.tokenHash).then((disponivel) => {
+        if (active && !disponivel) {
+          setLinkPublicoInvalido(true);
+        }
+      });
     } else {
       setTokenAtual(null);
+      setLinkPublicoInvalido(false);
     }
+    return () => {
+      active = false;
+    };
   }, [linkAtivo]);
 
   const estornadosIds = useMemo(() => {
@@ -201,6 +214,7 @@ export const ClienteFichaPage: React.FC = () => {
         window.localStorage.setItem(`${LOCAL_TOKEN_PREFIX}${tokenHash}`, rawToken);
       }
       setTokenAtual(rawToken);
+      setLinkPublicoInvalido(false);
     } catch (err) {
       console.error('Erro ao gerar link de consulta:', err);
       const msg = err instanceof Error ? err.message : 'Erro ao gerar link.';
@@ -689,7 +703,7 @@ export const ClienteFichaPage: React.FC = () => {
             <p className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-800">{erroLink}</p>
           )}
 
-          {linkAtivo && consultaUrl ? (
+          {linkAtivo && consultaUrl && !linkPublicoInvalido ? (
             <div className="mt-5 space-y-4">
               <QRCodeCard
                 url={consultaUrl}
@@ -731,7 +745,12 @@ export const ClienteFichaPage: React.FC = () => {
             </div>
           ) : (
             <div className="mt-5 space-y-3">
-              {linkAtivo && !consultaUrl && (
+              {linkAtivo && linkPublicoInvalido && (
+                <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+                  Este link anterior não está mais disponível para consulta pública. Gere um novo link abaixo para compartilhar com o cliente.
+                </p>
+              )}
+              {linkAtivo && !linkPublicoInvalido && !consultaUrl && (
                 <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
                   Existe um link ativo gerado em outro aparelho. Por segurança o token não fica salvo no servidor — gere um novo link para visualizar e compartilhar aqui.
                 </p>

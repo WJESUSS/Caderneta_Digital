@@ -314,16 +314,20 @@ export function observarLinksCliente(
         .filter((docSnap) => docSnap.data().clienteId === clienteId)
         .map((docSnap) => {
           const d = docSnap.data();
+          const expiraDate = toDate(d.expiraEm);
+          const criadoDate = d.criadoEm
+            ? toDate(d.criadoEm)
+            : new Date(Math.max(0, expiraDate.getTime() - 30 * 24 * 60 * 60 * 1000));
           return {
             tokenHash: docSnap.id,
             comercioId: String(d.comercioId),
             clienteId: String(d.clienteId),
-            expiraEm: toDate(d.expiraEm),
+            expiraEm: expiraDate,
             revogado: Boolean(d.revogado),
             tentativasErradas: Number(d.tentativasErradas ?? 0),
             bloqueadoAte: toDate(d.bloqueadoAte),
             criadoPor: String(d.criadoPor),
-            criadoEm: toDate(d.criadoEm),
+            criadoEm: criadoDate,
           };
         })
         .sort((a, b) => b.criadoEm.getTime() - a.criadoEm.getTime());
@@ -949,23 +953,25 @@ async function sincronizarConsultasPublicasCliente(params: {
 
   const last4 = params.clienteWhatsapp.slice(-4);
   const primeiroNome = params.clienteNome.trim().split(/\s+/)[0] || 'Cliente';
+  const comercioNomeRaw = params.comercioNome.trim().slice(0, 80);
+  const comercioNomeSeguro = comercioNomeRaw.length >= 2 ? comercioNomeRaw : 'Comércio';
+  const ordenados = params.rawLancamentosDocs
+    .slice()
+    .sort((a, b) => b.criadoEmMs - a.criadoEmMs);
 
-  const resumo: ResumoPublicoCliente = {
-    comercioNome: params.comercioNome,
-    primeiroNome,
-    saldoDevedor: params.saldoDevedor,
-    valorVencido: params.valorVencido,
-    valorAVencer: params.valorAVencer,
-    proximoVencimento: params.proximoVencimento,
-    atualizadoEmIso: new Date().toISOString(),
-    pixChave: pixChave || '',
-    pixRecebedor: pixRecebedor || params.comercioNome,
-    comercioWhatsapp: comercioWhatsapp || '',
-    lancamentos: params.rawLancamentosDocs
-      .slice()
-      .sort((a, b) => b.criadoEmMs - a.criadoEmMs)
-      .slice(0, 30)
-      .map((l) => ({
+  const buildSummaryJson = (limiteItens: number) => {
+    const resumo: ResumoPublicoCliente = {
+      comercioNome: comercioNomeSeguro,
+      primeiroNome,
+      saldoDevedor: params.saldoDevedor,
+      valorVencido: params.valorVencido,
+      valorAVencer: params.valorAVencer,
+      proximoVencimento: params.proximoVencimento,
+      atualizadoEmIso: new Date().toISOString(),
+      pixChave: pixChave || '',
+      pixRecebedor: pixRecebedor || comercioNomeSeguro,
+      comercioWhatsapp: comercioWhatsapp || '',
+      lancamentos: ordenados.slice(0, limiteItens).map((l) => ({
         id: l.id,
         numero: l.numero,
         tipo: l.tipo,
@@ -977,22 +983,33 @@ async function sincronizarConsultasPublicasCliente(params: {
         criadoEmIso: new Date(l.criadoEmMs).toISOString(),
         estornado: params.estornadosIds.has(l.id),
       })),
+    };
+    return JSON.stringify(resumo);
   };
 
-  const comercioNomeRaw = params.comercioNome.trim().slice(0, 80);
-  const comercioNomeSeguro = comercioNomeRaw.length >= 2 ? comercioNomeRaw : 'Comércio';
-  const json = JSON.stringify(resumo);
-  const batch = writeBatch(db);
   for (const linkDoc of activeLinks) {
     const tokenHash = linkDoc.id;
-    const enc = await encryptPublicPayload(json, tokenHash, `${params.comercioId}:${last4}`);
-    batch.update(doc(db, 'consultasPublicas', tokenHash), {
-      comercioNome: comercioNomeSeguro,
-      payloadCifrado: enc,
-      atualizadoEm: serverTimestamp(),
-    });
+    let enc = '';
+    for (const limiteItens of [30, 15, 5, 0]) {
+      enc = await encryptPublicPayload(
+        buildSummaryJson(limiteItens),
+        tokenHash,
+        `${params.comercioId}:${last4}`
+      );
+      if (enc.length <= 30000) break;
+    }
+    try {
+      await writeBatch(db)
+        .update(doc(db, 'consultasPublicas', tokenHash), {
+          comercioNome: comercioNomeSeguro,
+          payloadCifrado: enc,
+          atualizadoEm: serverTimestamp(),
+        })
+        .commit();
+    } catch {
+      // Melhor esforço individual caso exista link legado sem projeção pública
+    }
   }
-  await batch.commit();
 }
 
 async function fetchClientLancamentos(comercioId: string, clienteId: string) {
@@ -2154,6 +2171,22 @@ export async function revogarLinkConsulta(params: {
   }
 }
 
+export async function verificarConsultaPublicaDisponivel(
+  tokenHash: string
+): Promise<boolean> {
+  if (!/^[a-f0-9]{64}$/i.test(tokenHash)) return false;
+  try {
+    const snap = await getDoc(doc(db, 'consultasPublicas', tokenHash));
+    if (!snap.exists()) return false;
+    const d = snap.data();
+    if (d.revogado) return false;
+    if (toDate(d.expiraEm).getTime() <= Date.now()) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function consultarSaldoPublicoPorToken(
   rawToken: string,
   ultimos4Digitos: string
@@ -2166,11 +2199,12 @@ export async function consultarSaldoPublicoPorToken(
   if (!/^\d{4}$/.test(cleanDigits)) {
     return { status: 'invalido_digitos', tentativasRestantes: 5 };
   }
-  if (!/^[a-f0-9]{32,128}$/i.test(rawToken.trim())) {
+  const cleanToken = rawToken.trim().toLowerCase();
+  if (!/^[a-f0-9]{32,128}$/.test(cleanToken)) {
     return { status: 'indisponivel' };
   }
 
-  const tokenHash = await sha256Hex(rawToken.trim());
+  const tokenHash = await sha256Hex(cleanToken);
 
   // Passa pelo rate limiter do servidor Express antes de consultar
   try {
@@ -2189,11 +2223,13 @@ export async function consultarSaldoPublicoPorToken(
   let snap;
   try {
     snap = await getDoc(doc(db, 'consultasPublicas', tokenHash));
-  } catch {
+  } catch (err) {
+    console.warn('Consulta pública indisponível ao ler projeção:', err);
     return { status: 'indisponivel' };
   }
 
   if (!snap.exists()) {
+    console.warn('Consulta pública indisponível: projeção não encontrada.');
     return { status: 'indisponivel' };
   }
 
@@ -2214,19 +2250,23 @@ export async function consultarSaldoPublicoPorToken(
   if (hashInformado !== d.ultimos4Hash) {
     const novas = tentativas + 1;
     const bloqueio = novas >= 5 ? Timestamp.fromMillis(agora + 15 * 60 * 1000) : d.bloqueadoAte;
-    const batch = writeBatch(db);
-    batch.update(doc(db, 'consultasPublicas', tokenHash), {
-      tentativasErradas: novas,
-      bloqueadoAte: bloqueio,
-      atualizadoEm: serverTimestamp(),
-    });
-    batch.set(doc(db, 'acessosLink', makeDocId('acc')), {
-      comercioId: String(d.comercioId),
-      tokenHash,
-      quando: serverTimestamp(),
-      resultado: novas >= 5 ? 'bloqueado' : 'invalido',
-    });
-    await batch.commit();
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'consultasPublicas', tokenHash), {
+        tentativasErradas: novas,
+        bloqueadoAte: bloqueio,
+        atualizadoEm: serverTimestamp(),
+      });
+      batch.set(doc(db, 'acessosLink', makeDocId('acc')), {
+        comercioId: String(d.comercioId),
+        tokenHash,
+        quando: serverTimestamp(),
+        resultado: novas >= 5 ? 'bloqueado' : 'invalido',
+      });
+      await batch.commit();
+    } catch (err) {
+      console.warn('Aviso ao registrar tentativa inválida do link público:', err);
+    }
 
     if (novas >= 5) {
       return { status: 'bloqueado' };
@@ -2234,14 +2274,21 @@ export async function consultarSaldoPublicoPorToken(
     return { status: 'invalido_digitos', tentativasRestantes: Math.max(0, 5 - novas) };
   }
 
+  let resumo: ResumoPublicoCliente;
   try {
     const plainJson = await decryptPublicPayload(
       String(d.payloadCifrado),
       tokenHash,
       `${String(d.comercioId)}:${cleanDigits}`
     );
-    const resumo = JSON.parse(plainJson) as ResumoPublicoCliente;
+    resumo = JSON.parse(plainJson) as ResumoPublicoCliente;
+  } catch (err) {
+    console.warn('Erro ao decifrar resumo público:', err);
+    return { status: 'indisponivel' };
+  }
 
+  // Registro de acesso é melhor-esforço para não bloquear a visualização do cliente
+  try {
     await writeBatch(db)
       .set(doc(db, 'acessosLink', makeDocId('acc')), {
         comercioId: String(d.comercioId),
@@ -2250,11 +2297,11 @@ export async function consultarSaldoPublicoPorToken(
         resultado: 'ok',
       })
       .commit();
-
-    return { status: 'ok', resumo };
-  } catch {
-    return { status: 'indisponivel' };
+  } catch (err) {
+    console.warn('Aviso ao gravar log de acesso ao link:', err);
   }
+
+  return { status: 'ok', resumo };
 }
 
 export async function carregarDadosExemplo(params: {

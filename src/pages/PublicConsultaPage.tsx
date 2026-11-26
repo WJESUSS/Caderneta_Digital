@@ -26,6 +26,13 @@ export const PublicConsultaPage: React.FC = () => {
   const [copiaColaCopiado, setCopiaColaCopiado] = useState(false);
   const pixCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  useEffect(() => {
+    setErro(null);
+    setIndisponivel(false);
+    setResumo(null);
+    setDigitos('');
+  }, [token]);
+
   const handleConsultar = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro(null);
@@ -56,6 +63,8 @@ export const PublicConsultaPage: React.FC = () => {
         setIndisponivel(true);
         setErro('Este link de consulta não está mais disponível ou expirou. Peça um novo link ao comércio.');
       }
+    } catch {
+      setErro('Não foi possível verificar o link agora. Tente novamente em instantes.');
     } finally {
       setCarregando(false);
     }
