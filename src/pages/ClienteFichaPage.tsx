@@ -202,12 +202,26 @@ export const ClienteFichaPage: React.FC = () => {
       }
       setTokenAtual(rawToken);
     } catch (err) {
+      console.error('Erro ao gerar link de consulta:', err);
       const msg = err instanceof Error ? err.message : 'Erro ao gerar link.';
-      setErroLink(
-        msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')
-          ? 'Sem permissão no Firestore para gerar link. Confira se as regras de firestore.rules estão publicadas no Firebase Console.'
-          : msg
-      );
+      if (msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')) {
+        let detalhe = '';
+        if (msg.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(msg);
+            if (parsed?.operationType || parsed?.path) {
+              detalhe = ` (${parsed.operationType || 'write'} em ${parsed.path || 'linksConsulta'})`;
+            }
+          } catch {
+            // ignora parse
+          }
+        }
+        setErroLink(
+          `Sem permissão no Firestore para gerar link${detalhe}. Confira se as regras de firestore.rules estão publicadas no Firebase Console.`
+        );
+      } else {
+        setErroLink(msg);
+      }
     } finally {
       setGerandoLink(false);
     }
@@ -216,15 +230,24 @@ export const ClienteFichaPage: React.FC = () => {
   const handleRevogarLink = async () => {
     if (!comercio || !usuario || !linkAtivo) return;
     setErroLink(null);
-    await revogarLinkConsulta({
-      comercioId: comercio.id,
-      tokenHash: linkAtivo.tokenHash,
-      uid: usuario.uid,
-    });
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(`${LOCAL_TOKEN_PREFIX}${linkAtivo.tokenHash}`);
+    try {
+      await revogarLinkConsulta({
+        comercioId: comercio.id,
+        tokenHash: linkAtivo.tokenHash,
+        uid: usuario.uid,
+      });
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(`${LOCAL_TOKEN_PREFIX}${linkAtivo.tokenHash}`);
+      }
+      setTokenAtual(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao revogar link.';
+      setErroLink(
+        msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')
+          ? 'Sem permissão no Firestore para revogar o link.'
+          : msg
+      );
     }
-    setTokenAtual(null);
   };
 
   const handleConfirmarEstorno = async (e: React.FormEvent) => {
@@ -338,6 +361,25 @@ export const ClienteFichaPage: React.FC = () => {
     exclusao: 'Exclusão / anonimização',
   };
 
+  const formatarErroFirestore = (err: unknown, fallback: string) => {
+    const msg = err instanceof Error ? err.message : fallback;
+    if (msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')) {
+      let detalhe = '';
+      if (msg.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(msg);
+          if (parsed?.operationType || parsed?.path) {
+            detalhe = ` (${parsed.operationType || 'write'} em ${parsed.path || 'consentimentos'})`;
+          }
+        } catch {
+          // ignora parse
+        }
+      }
+      return `Sem permissão no Firestore${detalhe}. Confira se as regras de firestore.rules estão publicadas no Firebase Console.`;
+    }
+    return msg;
+  };
+
   const handleRegistrarOptOut = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!comercio || !usuario) return;
@@ -352,13 +394,15 @@ export const ClienteFichaPage: React.FC = () => {
         canal: optOutCanal,
         origem: optOutOrigem,
         uid: usuario.uid,
+        perfil: usuario.perfil,
       });
       setOptOutAberto(false);
       setMsgConsentimento(
         'Opt-out registrado. Envios pelo WhatsApp foram bloqueados mantendo o histórico intacto.'
       );
     } catch (err) {
-      setErroConsentimento(err instanceof Error ? err.message : 'Erro ao registrar opt-out.');
+      console.error('Erro ao registrar opt-out:', err);
+      setErroConsentimento(formatarErroFirestore(err, 'Erro ao registrar opt-out.'));
     } finally {
       setSalvandoOptOut(false);
     }
@@ -382,9 +426,8 @@ export const ClienteFichaPage: React.FC = () => {
       setNovoConsentAberto(false);
       setMsgConsentimento('Novo consentimento registrado no histórico do cliente.');
     } catch (err) {
-      setErroConsentimento(
-        err instanceof Error ? err.message : 'Erro ao registrar novo consentimento.'
-      );
+      console.error('Erro ao registrar novo consentimento:', err);
+      setErroConsentimento(formatarErroFirestore(err, 'Erro ao registrar novo consentimento.'));
     } finally {
       setSalvandoNovoConsent(false);
     }

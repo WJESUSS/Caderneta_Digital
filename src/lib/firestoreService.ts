@@ -11,6 +11,8 @@ import {
   Timestamp,
   where,
   writeBatch,
+  type DocumentData,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore';
 import {
@@ -477,6 +479,7 @@ export async function editarCliente(params: {
   batch.update(clienteRef, payload);
 
   // Se Dono inativar cliente, revoga links ativos automaticamente
+  const linksParaRevogarConsultas: string[] = [];
   if (params.perfil === 'dono' && params.ativo === false) {
     const linksSnap = await getDocs(
       query(
@@ -486,10 +489,7 @@ export async function editarCliente(params: {
     );
     for (const lDoc of linksSnap.docs.filter((d) => d.data().clienteId === params.clienteId)) {
       batch.update(lDoc.ref, { revogado: true });
-      batch.update(doc(db, 'consultasPublicas', lDoc.id), {
-        revogado: true,
-        atualizadoEm: serverTimestamp(),
-      });
+      linksParaRevogarConsultas.push(lDoc.id);
     }
   }
 
@@ -505,6 +505,19 @@ export async function editarCliente(params: {
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `clientes/${params.clienteId}`);
+  }
+
+  for (const tokenHash of linksParaRevogarConsultas) {
+    try {
+      await writeBatch(db)
+        .update(doc(db, 'consultasPublicas', tokenHash), {
+          revogado: true,
+          atualizadoEm: serverTimestamp(),
+        })
+        .commit();
+    } catch {
+      // Melhor esforço caso documento legado não exista em consultasPublicas
+    }
   }
 }
 
@@ -546,19 +559,76 @@ export async function registrarOptOutWhatsApp(params: {
   canal: CanalConsentimento;
   origem: string;
   uid: string;
+  perfil?: 'dono' | 'atendente';
 }): Promise<void> {
   const origemLimpa = params.origem.trim().slice(0, 160);
   if (origemLimpa.length < 2) {
     throw new Error('Informe a origem do pedido de opt-out (mínimo 2 caracteres).');
   }
 
-  const batch = writeBatch(db);
-  // Mantém consentimentoWhatsapp como estava para preservar histórico; marca semContatoWhatsapp: true
-  batch.update(doc(db, 'clientes', params.clienteId), {
+  const cliRef = doc(db, 'clientes', params.clienteId);
+  let cliData: Record<string, unknown> | null = null;
+  try {
+    const cliSnap = await getDoc(cliRef);
+    if (!cliSnap.exists()) {
+      throw new Error('Cliente não encontrado.');
+    }
+    cliData = cliSnap.data() as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof Error && err.message === 'Cliente não encontrado.') throw err;
+    handleFirestoreError(err, OperationType.GET, `clientes/${params.clienteId}`);
+  }
+
+  const cliUpdate: Record<string, unknown> = {
     semContatoWhatsapp: true,
     atualizadoEm: serverTimestamp(),
-  });
-  batch.set(doc(db, 'consentimentos', makeDocId('cns')), {
+  };
+
+  // Se Dono e documento legado tiver alguma inconsistência de schema, normaliza apenas o necessário
+  if (params.perfil === 'dono' && cliData) {
+    if (typeof cliData.anonimizado !== 'boolean') {
+      cliUpdate.anonimizado = false;
+    }
+    if (typeof cliData.ativo !== 'boolean') {
+      cliUpdate.ativo = true;
+    }
+    if (typeof cliData.consentimentoWhatsapp !== 'boolean') {
+      cliUpdate.consentimentoWhatsapp = true;
+    }
+    if (!cliData.consentimentoEm) {
+      cliUpdate.consentimentoEm = cliData.criadoEm || serverTimestamp();
+    }
+    if (typeof cliData.proximoVencimento !== 'string') {
+      cliUpdate.proximoVencimento = '';
+    }
+    const diaRaw = Number(cliData.diaVencimento ?? 10);
+    if (!Number.isInteger(diaRaw) || diaRaw < 1 || diaRaw > 28) {
+      cliUpdate.diaVencimento = Math.max(1, Math.min(28, Math.round(diaRaw || 10)));
+    }
+    const vVenc = Math.max(0, Math.round(Number(cliData.valorVencido ?? 0)));
+    const vAVenc = Math.max(0, Math.round(Number(cliData.valorAVencer ?? 0)));
+    const saldoAtual = Math.max(0, Math.round(Number(cliData.saldoDevedor ?? 0)));
+    if (
+      typeof cliData.valorVencido !== 'number' ||
+      typeof cliData.valorAVencer !== 'number' ||
+      typeof cliData.saldoDevedor !== 'number' ||
+      saldoAtual !== vVenc + vAVenc
+    ) {
+      cliUpdate.valorVencido = vVenc;
+      cliUpdate.valorAVencer = vAVenc;
+      cliUpdate.saldoDevedor = vVenc + vAVenc;
+    }
+  }
+
+  try {
+    await writeBatch(db).update(cliRef, cliUpdate).commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `clientes/${params.clienteId}`);
+  }
+
+  const cnsId = makeDocId('cns');
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'consentimentos', cnsId), {
     comercioId: params.comercioId,
     clienteId: params.clienteId,
     tipo: 'opt_out',
@@ -578,7 +648,7 @@ export async function registrarOptOutWhatsApp(params: {
   try {
     await batch.commit();
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `consentimentos/${params.clienteId}`);
+    handleFirestoreError(err, OperationType.CREATE, `consentimentos/${cnsId}`);
   }
 }
 
@@ -595,14 +665,23 @@ export async function registrarNovoConsentimentoWhatsApp(params: {
     throw new Error('Informe a origem do novo consentimento.');
   }
 
+  const cliRef = doc(db, 'clientes', params.clienteId);
+  try {
+    await writeBatch(db)
+      .update(cliRef, {
+        consentimentoWhatsapp: true,
+        consentimentoEm: serverTimestamp(),
+        semContatoWhatsapp: false,
+        atualizadoEm: serverTimestamp(),
+      })
+      .commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `clientes/${params.clienteId}`);
+  }
+
+  const cnsId = makeDocId('cns');
   const batch = writeBatch(db);
-  batch.update(doc(db, 'clientes', params.clienteId), {
-    consentimentoWhatsapp: true,
-    consentimentoEm: serverTimestamp(),
-    semContatoWhatsapp: false,
-    atualizadoEm: serverTimestamp(),
-  });
-  batch.set(doc(db, 'consentimentos', makeDocId('cns')), {
+  batch.set(doc(db, 'consentimentos', cnsId), {
     comercioId: params.comercioId,
     clienteId: params.clienteId,
     tipo: 'consentimento',
@@ -622,7 +701,7 @@ export async function registrarNovoConsentimentoWhatsApp(params: {
   try {
     await batch.commit();
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `consentimentos/${params.clienteId}`);
+    handleFirestoreError(err, OperationType.CREATE, `consentimentos/${cnsId}`);
   }
 }
 
@@ -780,12 +859,10 @@ export async function anonimizarClienteLGPD(params: {
       where('comercioId', '==', params.comercioId)
     )
   );
+  const linksParaRevogarConsultas: string[] = [];
   for (const lDoc of linksSnap.docs.filter((d) => d.data().clienteId === params.clienteId)) {
     batch.update(lDoc.ref, { revogado: true });
-    batch.update(doc(db, 'consultasPublicas', lDoc.id), {
-      revogado: true,
-      atualizadoEm: serverTimestamp(),
-    });
+    linksParaRevogarConsultas.push(lDoc.id);
   }
 
   batch.set(doc(db, 'auditoria', makeDocId('aud')), {
@@ -800,6 +877,19 @@ export async function anonimizarClienteLGPD(params: {
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `clientes/${params.clienteId}`);
+  }
+
+  for (const tokenHash of linksParaRevogarConsultas) {
+    try {
+      await writeBatch(db)
+        .update(doc(db, 'consultasPublicas', tokenHash), {
+          revogado: true,
+          atualizadoEm: serverTimestamp(),
+        })
+        .commit();
+    } catch {
+      // Melhor esforço caso documento legado não exista em consultasPublicas
+    }
   }
 }
 
@@ -889,13 +979,15 @@ async function sincronizarConsultasPublicasCliente(params: {
       })),
   };
 
+  const comercioNomeRaw = params.comercioNome.trim().slice(0, 80);
+  const comercioNomeSeguro = comercioNomeRaw.length >= 2 ? comercioNomeRaw : 'Comércio';
   const json = JSON.stringify(resumo);
   const batch = writeBatch(db);
   for (const linkDoc of activeLinks) {
     const tokenHash = linkDoc.id;
     const enc = await encryptPublicPayload(json, tokenHash, `${params.comercioId}:${last4}`);
     batch.update(doc(db, 'consultasPublicas', tokenHash), {
-      comercioNome: params.comercioNome,
+      comercioNome: comercioNomeSeguro,
       payloadCifrado: enc,
       atualizadoEm: serverTimestamp(),
     });
@@ -1863,15 +1955,24 @@ export async function gerarLinkConsulta(params: {
   let pixChave = params.pixChave;
   let pixRecebedor = params.pixRecebedor;
   let comercioWhatsapp = params.comercioWhatsapp;
-  if (pixChave === undefined || pixRecebedor === undefined || comercioWhatsapp === undefined) {
-    const comSnap = await getDoc(doc(db, 'comercios', params.comercioId));
-    if (comSnap.exists()) {
-      const cd = comSnap.data();
-      pixChave = String(cd.pixChave ?? '');
-      pixRecebedor = String(cd.pixRecebedor ?? '');
-      comercioWhatsapp = String(cd.whatsappContato ?? '');
+  let comercioNomeBase = params.comercioNome;
+  if (pixChave === undefined || pixRecebedor === undefined || comercioWhatsapp === undefined || !comercioNomeBase.trim()) {
+    try {
+      const comSnap = await getDoc(doc(db, 'comercios', params.comercioId));
+      if (comSnap.exists()) {
+        const cd = comSnap.data();
+        if (!comercioNomeBase.trim()) comercioNomeBase = String(cd.nome ?? '');
+        if (pixChave === undefined) pixChave = String(cd.pixChave ?? '');
+        if (pixRecebedor === undefined) pixRecebedor = String(cd.pixRecebedor ?? '');
+        if (comercioWhatsapp === undefined) comercioWhatsapp = String(cd.whatsappContato ?? '');
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `comercios/${params.comercioId}`);
     }
   }
+
+  const comercioNomeLimpo = comercioNomeBase.trim().slice(0, 80);
+  const comercioNomeSeguro = comercioNomeLimpo.length >= 2 ? comercioNomeLimpo : 'Comércio';
 
   const baseCalc: LancamentoCalcInput[] = params.lancamentos.map((l) => ({
     id: l.id,
@@ -1885,7 +1986,7 @@ export async function gerarLinkConsulta(params: {
   const primeiroNome = params.cliente.nome.trim().split(/\s+/)[0] || 'Cliente';
 
   const resumo: ResumoPublicoCliente = {
-    comercioNome: params.comercioNome,
+    comercioNome: comercioNomeSeguro,
     primeiroNome,
     saldoDevedor: calc.saldoDevedor,
     valorVencido: calc.valorVencido,
@@ -1893,7 +1994,7 @@ export async function gerarLinkConsulta(params: {
     proximoVencimento: calc.proximoVencimento,
     atualizadoEmIso: new Date().toISOString(),
     pixChave: pixChave || '',
-    pixRecebedor: pixRecebedor || params.comercioNome,
+    pixRecebedor: pixRecebedor || comercioNomeSeguro,
     comercioWhatsapp: comercioWhatsapp || '',
     lancamentos: params.lancamentos
       .slice()
@@ -1919,25 +2020,23 @@ export async function gerarLinkConsulta(params: {
     `${params.comercioId}:${last4}`
   );
 
-  // Revoga links anteriores do cliente e cria o novo
-  const prevSnap = await getDocs(
-    query(
-      collection(db, 'linksConsulta'),
-      where('comercioId', '==', params.comercioId)
-    )
-  );
-
-  const batch = writeBatch(db);
-  for (const prev of prevSnap.docs.filter((d) => d.data().clienteId === params.cliente.id)) {
-    if (!prev.data().revogado) {
-      batch.update(prev.ref, { revogado: true });
-      batch.update(doc(db, 'consultasPublicas', prev.id), {
-        revogado: true,
-        atualizadoEm: serverTimestamp(),
-      });
-    }
+  // Busca links anteriores para revogação após criar o novo link
+  let prevDocsParaRevogar: QueryDocumentSnapshot<DocumentData>[] = [];
+  try {
+    const prevSnap = await getDocs(
+      query(
+        collection(db, 'linksConsulta'),
+        where('comercioId', '==', params.comercioId)
+      )
+    );
+    prevDocsParaRevogar = prevSnap.docs.filter(
+      (d) => d.data().clienteId === params.cliente.id && !d.data().revogado
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'linksConsulta');
   }
 
+  const batch = writeBatch(db);
   batch.set(doc(db, 'linksConsulta', tokenHash), {
     comercioId: params.comercioId,
     clienteId: params.cliente.id,
@@ -1952,7 +2051,7 @@ export async function gerarLinkConsulta(params: {
   batch.set(doc(db, 'consultasPublicas', tokenHash), {
     comercioId: params.comercioId,
     clienteId: params.cliente.id,
-    comercioNome: params.comercioNome,
+    comercioNome: comercioNomeSeguro,
     ultimos4Hash,
     payloadCifrado,
     expiraEm: Timestamp.fromDate(expiraEm),
@@ -1967,16 +2066,37 @@ export async function gerarLinkConsulta(params: {
     comercioId: params.comercioId,
     quem: params.uid,
     acao: 'link_consulta_gerado',
-    detalhes: `Novo link de consulta gerado para ${params.cliente.nome}.`,
+    detalhes: `Novo link de consulta gerado para ${params.cliente.nome}.`.slice(0, 300),
     quando: serverTimestamp(),
   });
 
   try {
     await batch.commit();
-    return { rawToken, tokenHash, expiraEm };
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `linksConsulta/${tokenHash}`);
   }
+
+  // Revoga links anteriores em melhor esforço para que um registro legado não impeça gerar novo link
+  for (const prev of prevDocsParaRevogar) {
+    try {
+      await writeBatch(db).update(prev.ref, { revogado: true }).commit();
+    } catch {
+      // Ignora caso documento antigo tenha formato incompatível
+    }
+    try {
+      await writeBatch(db)
+        .update(doc(db, 'consultasPublicas', prev.id), {
+          comercioNome: comercioNomeSeguro,
+          revogado: true,
+          atualizadoEm: serverTimestamp(),
+        })
+        .commit();
+    } catch {
+      // Ignora caso projeção antiga não exista em consultasPublicas
+    }
+  }
+
+  return { rawToken, tokenHash, expiraEm };
 }
 
 export async function revogarLinkConsulta(params: {
@@ -1986,10 +2106,6 @@ export async function revogarLinkConsulta(params: {
 }): Promise<void> {
   const batch = writeBatch(db);
   batch.update(doc(db, 'linksConsulta', params.tokenHash), { revogado: true });
-  batch.update(doc(db, 'consultasPublicas', params.tokenHash), {
-    revogado: true,
-    atualizadoEm: serverTimestamp(),
-  });
   batch.set(doc(db, 'auditoria', makeDocId('aud')), {
     comercioId: params.comercioId,
     quem: params.uid,
@@ -2001,6 +2117,17 @@ export async function revogarLinkConsulta(params: {
     await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `linksConsulta/${params.tokenHash}`);
+  }
+
+  try {
+    await writeBatch(db)
+      .update(doc(db, 'consultasPublicas', params.tokenHash), {
+        revogado: true,
+        atualizadoEm: serverTimestamp(),
+      })
+      .commit();
+  } catch {
+    // Melhor esforço caso projeção pública não exista
   }
 }
 

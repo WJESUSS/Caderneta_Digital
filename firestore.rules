@@ -175,7 +175,7 @@ service cloud.firestore {
         && isValidId(data.clienteId)
         && data.comercioNome is string && data.comercioNome.size() >= 2 && data.comercioNome.size() <= 80
         && data.ultimos4Hash is string && data.ultimos4Hash.size() == 64
-        && data.payloadCifrado is string && data.payloadCifrado.size() >= 10 && data.payloadCifrado.size() <= 32768
+        && data.payloadCifrado is string && data.payloadCifrado.size() >= 10 && data.payloadCifrado.size() <= 65536
         && data.expiraEm is timestamp
         && data.revogado is bool
         && data.tentativasErradas is int && data.tentativasErradas >= 0 && data.tentativasErradas <= 5
@@ -481,7 +481,10 @@ service cloud.firestore {
         && isMembroComercio(incoming().comercioId)
         && incoming().responsavel == request.auth.uid
         && incoming().dataHora == request.time
-        && existsAfter(/databases/$(database)/documents/clientes/$(incoming().clienteId))
+        && (
+          exists(/databases/$(database)/documents/clientes/$(incoming().clienteId))
+          || existsAfter(/databases/$(database)/documents/clientes/$(incoming().clienteId))
+        )
         && (
           incoming().tipo == 'opt_out'
           || isDono(incoming().comercioId)

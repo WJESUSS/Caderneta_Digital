@@ -373,7 +373,7 @@
         "payloadCifrado": {
           "type": "string",
           "minLength": 10,
-          "maxLength": 32768
+          "maxLength": 65536
         },
         "expiraEm": {
           "type": "string",
