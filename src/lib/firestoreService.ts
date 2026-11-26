@@ -2036,44 +2036,56 @@ export async function gerarLinkConsulta(params: {
     handleFirestoreError(err, OperationType.LIST, 'linksConsulta');
   }
 
-  const batch = writeBatch(db);
-  batch.set(doc(db, 'linksConsulta', tokenHash), {
-    comercioId: params.comercioId,
-    clienteId: params.cliente.id,
-    expiraEm: Timestamp.fromDate(expiraEm),
-    revogado: false,
-    tentativasErradas: 0,
-    bloqueadoAte: Timestamp.fromMillis(0),
-    criadoPor: params.uid,
-    criadoEm: serverTimestamp(),
-  });
-
-  batch.set(doc(db, 'consultasPublicas', tokenHash), {
-    comercioId: params.comercioId,
-    clienteId: params.cliente.id,
-    comercioNome: comercioNomeSeguro,
-    ultimos4Hash,
-    payloadCifrado,
-    expiraEm: Timestamp.fromDate(expiraEm),
-    revogado: false,
-    tentativasErradas: 0,
-    bloqueadoAte: Timestamp.fromMillis(0),
-    criadoEm: serverTimestamp(),
-    atualizadoEm: serverTimestamp(),
-  });
-
-  batch.set(doc(db, 'auditoria', makeDocId('aud')), {
-    comercioId: params.comercioId,
-    quem: params.uid,
-    acao: 'link_consulta_gerado',
-    detalhes: `Novo link de consulta gerado para ${params.cliente.nome}.`.slice(0, 300),
-    quando: serverTimestamp(),
-  });
+  try {
+    await writeBatch(db)
+      .set(doc(db, 'linksConsulta', tokenHash), {
+        comercioId: params.comercioId,
+        clienteId: params.cliente.id,
+        expiraEm: Timestamp.fromDate(expiraEm),
+        revogado: false,
+        tentativasErradas: 0,
+        bloqueadoAte: Timestamp.fromMillis(0),
+        criadoPor: params.uid,
+        criadoEm: serverTimestamp(),
+      })
+      .commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `linksConsulta/${tokenHash}`);
+  }
 
   try {
-    await batch.commit();
+    await writeBatch(db)
+      .set(doc(db, 'consultasPublicas', tokenHash), {
+        comercioId: params.comercioId,
+        clienteId: params.cliente.id,
+        comercioNome: comercioNomeSeguro,
+        ultimos4Hash,
+        payloadCifrado,
+        expiraEm: Timestamp.fromDate(expiraEm),
+        revogado: false,
+        tentativasErradas: 0,
+        bloqueadoAte: Timestamp.fromMillis(0),
+        criadoEm: serverTimestamp(),
+        atualizadoEm: serverTimestamp(),
+      })
+      .commit();
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `linksConsulta/${tokenHash}`);
+    handleFirestoreError(err, OperationType.CREATE, `consultasPublicas/${tokenHash}`);
+  }
+
+  const audId = makeDocId('aud');
+  try {
+    await writeBatch(db)
+      .set(doc(db, 'auditoria', audId), {
+        comercioId: params.comercioId,
+        quem: params.uid,
+        acao: 'link_consulta_gerado',
+        detalhes: `Novo link de consulta gerado para ${params.cliente.nome}.`.slice(0, 300),
+        quando: serverTimestamp(),
+      })
+      .commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `auditoria/${audId}`);
   }
 
   // Revoga links anteriores em melhor esforço para que um registro legado não impeça gerar novo link
