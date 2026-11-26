@@ -599,7 +599,6 @@ export async function editarCliente(params: {
           estornadosIds: calc.estornadosIds,
           comprasAtualizadas: calc.comprasAtualizadas,
           rawLancamentosDocs: lancs,
-          atualizarUltimos4Hash: true,
         });
       }
     } catch (syncErr) {
@@ -1007,7 +1006,6 @@ async function sincronizarConsultasPublicasCliente(params: {
     vencimento: string;
     criadoEmMs: number;
   }>;
-  atualizarUltimos4Hash?: boolean;
 }): Promise<void> {
   if (!params.clienteWhatsapp || params.clienteWhatsapp === 'ANONIMIZADO') return;
 
@@ -1098,12 +1096,10 @@ async function sincronizarConsultasPublicasCliente(params: {
     }
     const updateData: Record<string, unknown> = {
       comercioNome: comercioNomeSeguro,
+      ultimos4Hash: await sha256Hex(`${tokenHash}:${last4}`),
       payloadCifrado: enc,
       atualizadoEm: serverTimestamp(),
     };
-    if (params.atualizarUltimos4Hash) {
-      updateData.ultimos4Hash = await sha256Hex(`${tokenHash}:${last4}`);
-    }
     try {
       await writeBatch(db)
         .update(doc(db, 'consultasPublicas', tokenHash), updateData)
@@ -2349,7 +2345,7 @@ export async function consultarSaldoPublicoPorToken(
 ): Promise<
   | { status: 'ok'; resumo: ResumoPublicoCliente }
   | { status: 'invalido_digitos'; tentativasRestantes: number }
-  | { status: 'bloqueado' | 'indisponivel' }
+  | { status: 'bloqueado' | 'indisponivel' | 'erro_conexao' | 'erro_dados' }
 > {
   const cleanDigits = ultimos4Digitos.replace(/\D/g, '');
   if (!/^\d{4}$/.test(cleanDigits)) {
@@ -2381,17 +2377,22 @@ export async function consultarSaldoPublicoPorToken(
   try {
     snap = await getDocFromServer(consultaRef);
   } catch (serverErr) {
+    const code =
+      serverErr && typeof serverErr === 'object' && 'code' in serverErr
+        ? String((serverErr as { code?: unknown }).code ?? '').toLowerCase()
+        : '';
     const msg = serverErr instanceof Error ? serverErr.message : String(serverErr);
-    if (msg.includes('permission-denied') || msg.includes('PERMISSION_DENIED') || msg.includes('Missing or insufficient permissions')) {
+    const isPermissionDenied =
+      code === 'permission-denied' ||
+      msg.includes('permission-denied') ||
+      msg.includes('PERMISSION_DENIED') ||
+      msg.includes('Missing or insufficient permissions');
+    if (isPermissionDenied) {
       console.warn('Consulta pública indisponível ou bloqueada pelas regras:', serverErr);
       return { status: 'indisponivel' };
     }
-    try {
-      snap = await getDoc(consultaRef);
-    } catch (err) {
-      console.warn('Consulta pública indisponível ao ler projeção:', err);
-      return { status: 'indisponivel' };
-    }
+    console.warn('Erro de conexão ao consultar saldo público:', serverErr);
+    return { status: 'erro_conexao' };
   }
 
   if (!snap.exists()) {
@@ -2403,19 +2404,23 @@ export async function consultarSaldoPublicoPorToken(
   const agora = Date.now();
   const expiraMs = toDate(d.expiraEm).getTime();
   const bloqueadoMs = toDate(d.bloqueadoAte).getTime();
-  const tentativas = Number(d.tentativasErradas ?? 0);
+  const tentativasBrutas = Number(d.tentativasErradas ?? 0);
 
   if (d.revogado || expiraMs <= agora) {
     return { status: 'indisponivel' };
   }
-  if (bloqueadoMs > agora || tentativas >= 5) {
+  if (bloqueadoMs > agora) {
     return { status: 'bloqueado' };
   }
+
+  // Quando bloqueadoAte já passou e tentativasErradas >= 5, reinicia a contagem como 0
+  const tentativas = tentativasBrutas >= 5 ? 0 : tentativasBrutas;
 
   const hashInformado = await sha256Hex(`${tokenHash}:${cleanDigits}`);
   if (hashInformado !== d.ultimos4Hash) {
     const novas = tentativas + 1;
-    const bloqueio = novas >= 5 ? Timestamp.fromMillis(agora + 15 * 60 * 1000) : d.bloqueadoAte;
+    const bloqueio =
+      novas >= 5 ? Timestamp.fromMillis(agora + 15 * 60 * 1000) : Timestamp.fromMillis(0);
     try {
       const batch = writeBatch(db);
       batch.update(doc(db, 'consultasPublicas', tokenHash), {
@@ -2450,7 +2455,7 @@ export async function consultarSaldoPublicoPorToken(
     resumo = JSON.parse(plainJson) as ResumoPublicoCliente;
   } catch (err) {
     console.warn('Erro ao decifrar resumo público:', err);
-    return { status: 'indisponivel' };
+    return { status: 'erro_dados' };
   }
 
   // Registro de acesso é melhor-esforço para não bloquear a visualização do cliente

@@ -443,12 +443,17 @@ service cloud.firestore {
           || (existing().revogado == false
             && existing().expiraEm > request.time
             && existing().bloqueadoAte <= request.time
-            && existing().tentativasErradas < 5
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'tentativasErradas', 'bloqueadoAte', 'atualizadoEm'
             ])
-            && incoming().tentativasErradas == existing().tentativasErradas + 1
-            && (incoming().tentativasErradas < 5 || incoming().bloqueadoAte > request.time))
+            && (
+              (existing().tentativasErradas < 5
+                && incoming().tentativasErradas == existing().tentativasErradas + 1
+                && (incoming().tentativasErradas < 5 || incoming().bloqueadoAte > request.time))
+              || (existing().tentativasErradas == 5
+                && incoming().tentativasErradas == 1
+                && incoming().bloqueadoAte <= request.time)
+            ))
         );
       allow delete: if false;
     }

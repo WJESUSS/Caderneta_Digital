@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Cliente, Lancamento } from './businessRules';
 
 // Simulador fiel em memória do Firestore + regras de acesso para testar todo o fluxo sem depender de localStorage
@@ -9,6 +9,7 @@ const sim = vi.hoisted(() => {
   const state = {
     currentUid: 'uid_dono' as string | null,
     nowMs: Date.now(),
+    networkError: null as Error | null,
   };
 
   class MockTimestamp {
@@ -110,6 +111,9 @@ vi.mock('firebase/firestore', () => {
       };
     },
     getDocFromServer: async (docRef: { colName: string; id: string }) => {
+      if (sim.state.networkError) {
+        throw sim.state.networkError;
+      }
       const data = sim.getCol(docRef.colName).get(docRef.id);
       if (docRef.colName === 'consultasPublicas') {
         sim.checkConsultaPublicaGetAllowed(data);
@@ -145,7 +149,32 @@ vi.mock('firebase/firestore', () => {
           ops.push(() => {
             const existing = sim.getCol(ref.colName).get(ref.id);
             if (!existing) throw new Error(`NOT_FOUND: ${ref.colName}/${ref.id}`);
-            sim.getCol(ref.colName).set(ref.id, { ...existing, ...sim.resolveSentinels(partial) });
+            const resolved = sim.resolveSentinels(partial);
+            if (ref.colName === 'consultasPublicas' && !sim.state.currentUid) {
+              const keys = Object.keys(resolved);
+              const allowedKeys = new Set(['tentativasErradas', 'bloqueadoAte', 'atualizadoEm']);
+              if (keys.some((k) => !allowedKeys.has(k))) {
+                throw new Error('Missing or insufficient permissions.');
+              }
+              const revogado = Boolean(existing.revogado);
+              const expiraMs = (existing.expiraEm as InstanceType<typeof sim.MockTimestamp>).toDate().getTime();
+              const prevBloqMs = (existing.bloqueadoAte as InstanceType<typeof sim.MockTimestamp>).toDate().getTime();
+              const prevTent = Number(existing.tentativasErradas ?? 0);
+              const nextTent = Number(resolved.tentativasErradas ?? prevTent);
+              const nextBloqMs = (resolved.bloqueadoAte as InstanceType<typeof sim.MockTimestamp>).toDate().getTime();
+              const branch1 =
+                prevTent < 5 &&
+                nextTent === prevTent + 1 &&
+                (nextTent < 5 || nextBloqMs > sim.state.nowMs);
+              const branch2 =
+                prevTent === 5 &&
+                nextTent === 1 &&
+                nextBloqMs <= sim.state.nowMs;
+              if (revogado || expiraMs <= sim.state.nowMs || prevBloqMs > sim.state.nowMs || (!branch1 && !branch2)) {
+                throw new Error('Missing or insufficient permissions.');
+              }
+            }
+            sim.getCol(ref.colName).set(ref.id, { ...existing, ...resolved });
           });
           return batchObj;
         },
@@ -227,8 +256,10 @@ const lancamentosBase: Lancamento[] = [
 describe('Fluxo completo de link público de consulta (/s/:token)', () => {
   beforeEach(() => {
     sim.collections.clear();
-    sim.state.nowMs = Date.now();
+    sim.state.nowMs = 1795690000000;
     sim.state.currentUid = 'uid_dono';
+    sim.state.networkError = null;
+    vi.spyOn(Date, 'now').mockImplementation(() => sim.state.nowMs);
 
     sim.getCol('comercios').set(COMERCIO_ID, {
       nome: 'Mercadinho Central',
@@ -253,6 +284,10 @@ describe('Fluxo completo de link público de consulta (/s/:token)', () => {
       ...lancamentosBase[0],
       criadoEm: sim.MockTimestamp.fromDate(lancamentosBase[0].criadoEm),
     });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('1 & 3. Gera link pelo Dono e abre em outro celular (sem login e sem localStorage)', async () => {
@@ -416,5 +451,67 @@ describe('Fluxo completo de link público de consulta (/s/:token)', () => {
     sim.state.currentUid = null;
     const resp = await consultarSaldoPublicoPorToken(rawToken, '4321');
     expect(resp.status).toBe('indisponivel');
+  });
+
+  it('9. Libera consulta após 15 minutos de bloqueio e reinicia contagem de erros em 1', async () => {
+    const { rawToken, tokenHash } = await gerarLinkConsulta({
+      comercioId: COMERCIO_ID,
+      comercioNome: 'Mercadinho Central',
+      cliente: clienteBase,
+      lancamentos: lancamentosBase,
+      uid: 'uid_dono',
+    });
+
+    sim.state.currentUid = null;
+    for (let i = 1; i <= 4; i++) {
+      const err = await consultarSaldoPublicoPorToken(rawToken, '0000');
+      expect(err).toEqual({ status: 'invalido_digitos', tentativasRestantes: 5 - i });
+    }
+    const bloq = await consultarSaldoPublicoPorToken(rawToken, '0000');
+    expect(bloq.status).toBe('bloqueado');
+
+    // Ainda bloqueado aos 14 minutos
+    sim.state.nowMs += 14 * 60 * 1000;
+    const aindaBloqueado = await consultarSaldoPublicoPorToken(rawToken, '4321');
+    expect(aindaBloqueado.status).toBe('indisponivel'); // bloqueadoAte > request.time nas rules bloqueia leitura
+
+    // Após completar 15 minutos (+ 2s), libera normalmente e reinicia contagem em 1 se errar novamente
+    sim.state.nowMs += 62 * 1000;
+    const erroAposBloqueio = await consultarSaldoPublicoPorToken(rawToken, '9999');
+    expect(erroAposBloqueio).toEqual({ status: 'invalido_digitos', tentativasRestantes: 4 });
+    expect(sim.getCol('consultasPublicas').get(tokenHash)?.tentativasErradas).toBe(1);
+
+    const sucessoAposBloqueio = await consultarSaldoPublicoPorToken(rawToken, '4321');
+    expect(sucessoAposBloqueio.status).toBe('ok');
+  });
+
+  it('10. Retorna erro_dados quando payloadCifrado não decifra e erro_conexao em falha de rede', async () => {
+    const { rawToken, tokenHash } = await gerarLinkConsulta({
+      comercioId: COMERCIO_ID,
+      comercioNome: 'Mercadinho Central',
+      cliente: clienteBase,
+      lancamentos: lancamentosBase,
+      uid: 'uid_dono',
+    });
+
+    sim.state.currentUid = null;
+
+    // Falha de rede ao ler documento
+    const netErr = Object.assign(new Error('Failed to get document because the client is offline.'), {
+      code: 'unavailable',
+    });
+    sim.state.networkError = netErr;
+    const semConexao = await consultarSaldoPublicoPorToken(rawToken, '4321');
+    expect(semConexao.status).toBe('erro_conexao');
+
+    // Restaura rede, mas corrompe payloadCifrado
+    sim.state.networkError = null;
+    const docAtual = sim.getCol('consultasPublicas').get(tokenHash)!;
+    sim.getCol('consultasPublicas').set(tokenHash, {
+      ...docAtual,
+      payloadCifrado: 'cGF5bG9hZC1jb3Jyb21waWRvLWludmFsaWRv',
+    });
+    const erroDados = await consultarSaldoPublicoPorToken(rawToken, '4321');
+    expect(erroDados.status).toBe('erro_dados');
   });
 });

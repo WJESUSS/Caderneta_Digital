@@ -53,18 +53,32 @@ export const PublicConsultaPage: React.FC = () => {
           setOpcaoValorPix('sem_valor');
         }
       } else if (resp.status === 'invalido_digitos') {
+        setDigitos('');
         setErro(
-          `Dígitos não conferem. Você ainda tem ${resp.tentativasRestantes} tentativa(s).`
+          `Número incorreto. Os 4 dígitos não conferem com o WhatsApp cadastrado na loja. Confira e tente novamente. ${
+            resp.tentativasRestantes === 1
+              ? 'Resta 1 tentativa.'
+              : `Restam ${resp.tentativasRestantes} tentativas.`
+          }`
         );
       } else if (resp.status === 'bloqueado') {
         setIndisponivel(true);
-        setErro('Muitas tentativas incorretas. Este link foi bloqueado temporariamente por segurança.');
+        setErro(
+          'Muitas tentativas incorretas. Por segurança, este link ficou bloqueado. Aguarde 15 minutos e abra o link novamente.'
+        );
+      } else if (resp.status === 'erro_conexao') {
+        setErro('Sem conexão com o servidor. Verifique sua internet e tente novamente.');
+      } else if (resp.status === 'erro_dados') {
+        setIndisponivel(true);
+        setErro('Não foi possível carregar seu extrato. Peça um novo link ao comércio.');
       } else {
         setIndisponivel(true);
-        setErro('Este link de consulta não está mais disponível ou expirou. Peça um novo link ao comércio.');
+        setErro(
+          'Não foi possível abrir este link. Ele pode ter expirado, sido substituído por um mais novo ou estar bloqueado por 15 minutos após várias tentativas erradas. Peça um novo link ao comércio.'
+        );
       }
     } catch {
-      setErro('Não foi possível verificar o link agora. Tente novamente em instantes.');
+      setErro('Sem conexão com o servidor. Verifique sua internet e tente novamente.');
     } finally {
       setCarregando(false);
     }
